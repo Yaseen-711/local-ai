@@ -74,6 +74,7 @@ tests/
 
 ## Documentation
 
+- docs/ARCHITECTURE.md - Foundation Core architecture, data contracts, and provider design
 - docs/SETUP.md - environment requirements and setup
 - docs/REPRODUCE.md - rebuilding the verified runtime
 - docs/MODELS.md - model storage and formats

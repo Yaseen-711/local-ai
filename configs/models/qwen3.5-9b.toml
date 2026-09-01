@@ -1,0 +1,23 @@
+# Canonical Model Configuration for Local AI Foundation
+
+[model]
+id = "qwen3.5-9b"
+display_name = "Qwen 3.5 9B Q4_K_M"
+format = "gguf"
+path = "models/gguf/Qwen3.5-9B-Q4_K_M.gguf"
+aliases = ["qwen3.5", "qwen-9b", "default"]
+supported_providers = ["llama_cpp"]
+roles = ["general", "coding"]
+
+[capabilities]
+chat = true
+code = true
+reasoning = false
+structured_output = true
+context_window = 4096
+
+[metadata]
+quantization = "Q4_K_M"
+parameter_count = "9B"
+architecture = "qwen35"
+verified_date = "2026-09-01"

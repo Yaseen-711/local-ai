@@ -1,0 +1,11 @@
+# Foundation Settings Configuration
+
+[foundation]
+environment = "development"
+models_dir = "models"
+configs_dir = "configs/models"
+
+[providers.llama_cpp]
+base_url = "http://127.0.0.1:8080"
+timeout_seconds = 60
+default_alias = "qwen3.5-9b"

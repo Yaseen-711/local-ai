@@ -1,0 +1,104 @@
+"""Normalized inference request, response, and message contracts.
+
+These contracts provide a stable, provider-agnostic representation of text-oriented
+inference tasks (code review, data analysis, document extraction, structured output,
+reports, agent tasks, and chat).
+"""
+
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional
+
+from core.common.types import FinishReason, MessageRole
+
+
+@dataclass(frozen=True)
+class Message:
+    """A single normalized message in an inference conversation or workflow."""
+    role: MessageRole
+    content: str
+    name: Optional[str] = None
+
+    @classmethod
+    def system(cls, content: str) -> "Message":
+        """Convenience constructor for a system message."""
+        return cls(role=MessageRole.SYSTEM, content=content)
+
+    @classmethod
+    def user(cls, content: str) -> "Message":
+        """Convenience constructor for a user message."""
+        return cls(role=MessageRole.USER, content=content)
+
+    @classmethod
+    def assistant(cls, content: str) -> "Message":
+        """Convenience constructor for an assistant message."""
+        return cls(role=MessageRole.ASSISTANT, content=content)
+
+
+@dataclass(frozen=True)
+class GenerationOptions:
+    """Normalized generation options for inference execution."""
+    temperature: float = 0.7
+    top_p: float = 0.95
+    max_tokens: int = 1024
+    stop_sequences: List[str] = field(default_factory=list)
+    seed: Optional[int] = None
+    extra_options: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class InferenceRequest:
+    """Normalized inference request submitted to the Foundation Core."""
+    model_id: str
+    messages: List[Message]
+    options: GenerationOptions = field(default_factory=GenerationOptions)
+    request_id: Optional[str] = None
+
+    @classmethod
+    def from_prompt(
+        cls,
+        model_id: str,
+        prompt: str,
+        system_prompt: Optional[str] = None,
+        options: Optional[GenerationOptions] = None,
+        request_id: Optional[str] = None,
+    ) -> "InferenceRequest":
+        """Convenience factory for non-conversational single prompt execution."""
+        messages: List[Message] = []
+        if system_prompt:
+            messages.append(Message.system(system_prompt))
+        messages.append(Message.user(prompt))
+        return cls(
+            model_id=model_id,
+            messages=messages,
+            options=options or GenerationOptions(),
+            request_id=request_id,
+        )
+
+
+@dataclass(frozen=True)
+class TokenUsage:
+    """Normalized token accounting for an inference request."""
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+
+
+@dataclass(frozen=True)
+class InferenceResponse:
+    """Normalized inference response returned by the Foundation Core.
+    
+    Consumers must rely strictly on normalized fields (message, finish_reason, usage, latency_ms).
+    The raw_response dictionary is retained purely for diagnostics/debugging.
+    """
+    request_id: Optional[str]
+    model_id: str
+    message: Message
+    finish_reason: FinishReason
+    usage: TokenUsage
+    latency_ms: float
+    raw_response: Optional[Dict[str, Any]] = None
+
+    @property
+    def text(self) -> str:
+        """Convenience accessor for generated text content."""
+        return self.message.content
