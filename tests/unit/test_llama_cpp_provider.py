@@ -74,6 +74,34 @@ def test_build_payload(mock_model_def):
     assert payload["messages"][1] == {"role": "user", "content": "User prompt"}
 
 
+def test_build_payload_resolves_alias_to_runtime_id(mock_model_def):
+    """Verify that a request using a Foundation alias resolves to the runtime-compatible model ID."""
+    provider = LlamaCppProvider()
+    # Caller requests via Foundation alias "default"
+    req = InferenceRequest.from_prompt(model_id="default", prompt="Hello")
+
+    payload = provider._build_payload(req, mock_model_def)
+    # Must send canonical model_def.id ("qwen3.5-9b") to runtime, NOT Foundation alias "default"
+    assert payload["model"] == "qwen3.5-9b"
+
+
+def test_build_payload_uses_metadata_alias():
+    """Verify that metadata['llama_cpp_alias'] is used if declared."""
+    provider = LlamaCppProvider()
+    custom_model_def = ModelDefinition(
+        id="foundation-id-1",
+        display_name="Custom Model",
+        format=ModelFormat.GGUF,
+        relative_path=Path("models/gguf/test.gguf"),
+        supported_providers=["llama_cpp"],
+        metadata={"llama_cpp_alias": "custom-server-alias"},
+    )
+    req = InferenceRequest.from_prompt(model_id="foundation-id-1", prompt="Hello")
+
+    payload = provider._build_payload(req, custom_model_def)
+    assert payload["model"] == "custom-server-alias"
+
+
 @patch("urllib.request.urlopen")
 def test_infer_success(mock_urlopen, mock_model_def):
     provider = LlamaCppProvider()

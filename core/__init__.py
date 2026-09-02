@@ -12,6 +12,7 @@ from core.common.errors import (
     ProviderNotFoundError,
     ProviderResponseError,
     ProviderUnavailableError,
+    WorkflowError,
 )
 from core.common.types import (
     FinishReason,
@@ -69,6 +70,7 @@ __all__ = [
     "ProviderResponseError",
     "InferenceError",
     "LifecycleConflictError",
+    "WorkflowError",
     # Config & Settings
     "load_model_definition",
     "load_model_definitions_from_dir",

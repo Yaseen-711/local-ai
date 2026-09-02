@@ -1,12 +1,22 @@
 # Build output
 build/
 **/build/
+dist/
+*.egg-info/
 
 # Python
 __pycache__/
 *.py[cod]
 .venv/
 venv/
+
+# Testing & Coverage
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+.mypy_cache/
+.ruff_cache/
 
 # Models
 models/**/*.gguf
@@ -29,6 +39,10 @@ models/**/*.onnx
 .env
 .env.*
 
-# IDE
+# IDE & OS
 .vscode/
 .idea/
+.DS_Store
+*.swp
+*.swo
+*~

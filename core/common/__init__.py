@@ -19,6 +19,7 @@ from core.common.errors import (
     ProviderNotFoundError,
     ProviderResponseError,
     ProviderUnavailableError,
+    WorkflowError,
 )
 
 __all__ = [
@@ -38,4 +39,5 @@ __all__ = [
     "ProviderResponseError",
     "InferenceError",
     "LifecycleConflictError",
+    "WorkflowError",
 ]

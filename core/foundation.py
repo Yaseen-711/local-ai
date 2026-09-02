@@ -7,7 +7,11 @@ from core.config.loader import load_settings
 from core.config.settings import Settings
 from core.inference.manager import ProviderManager
 from core.inference.providers.llama_cpp import LlamaCppProvider
-from core.inference.types import InferenceRequest, InferenceResponse
+from core.inference.types import (
+    GenerationOptions,
+    InferenceRequest,
+    InferenceResponse,
+)
 from core.models.registry import ModelRegistry
 
 
@@ -40,8 +44,34 @@ class FoundationCore:
         return self._settings
 
     def infer(self, request: InferenceRequest) -> InferenceResponse:
-        """Execute normalized inference."""
+        """Execute normalized inference.
+        
+        This is the formal reusable public execution boundary for higher-level workflows.
+        Workflows may call it any number of times, in loops, or between pipeline steps.
+        """
         return self._provider_manager.execute_inference(request)
+
+    def infer_prompt(
+        self,
+        model_id: str,
+        prompt: str,
+        system_prompt: Optional[str] = None,
+        options: Optional[GenerationOptions] = None,
+        request_id: Optional[str] = None,
+    ) -> InferenceResponse:
+        """Convenience single-turn execution method.
+        
+        Allows workflows to execute inference without manually constructing an InferenceRequest.
+        Internally delegates to self.infer() using the normalized contract.
+        """
+        request = InferenceRequest.from_prompt(
+            model_id=model_id,
+            prompt=prompt,
+            system_prompt=system_prompt,
+            options=options,
+            request_id=request_id,
+        )
+        return self.infer(request)
 
     @classmethod
     def create(

@@ -54,3 +54,14 @@ class InferenceError(ProviderError):
 class LifecycleConflictError(ProviderError):
     """Raised when a concurrent or conflicting lifecycle operation is attempted on Core state."""
     pass
+
+
+class WorkflowError(FoundationError):
+    """Raised when a workflow-level operation fails.
+
+    Distinct from infrastructure errors (ProviderError, ModelRegistryError).
+    Workflow authors may raise this to signal domain-level failures,
+    optionally wrapping an underlying infrastructure exception as the cause
+    via standard Python exception chaining (raise WorkflowError(...) from cause).
+    """
+    pass

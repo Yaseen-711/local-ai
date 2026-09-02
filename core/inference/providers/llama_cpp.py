@@ -156,6 +156,18 @@ class LlamaCppProvider(BaseProvider):
             latency_ms=latency_ms,
         )
 
+    def _resolve_runtime_model_id(self, request: InferenceRequest, model_def: ModelDefinition) -> str:
+        """Translate Foundation model identity to runtime-specific model identifier.
+        
+        Foundation model aliases (e.g. 'default', 'fast') exist at the Foundation
+        layer and must not be sent directly to llama-server. By default, the canonical
+        model definition ID is used. If metadata specifies a runtime-specific alias
+        (e.g. metadata['llama_cpp_alias']), that takes precedence.
+        """
+        if "llama_cpp_alias" in model_def.metadata:
+            return str(model_def.metadata["llama_cpp_alias"])
+        return model_def.id
+
     def _build_payload(self, request: InferenceRequest, model_def: ModelDefinition) -> Dict[str, Any]:
         """Convert normalized InferenceRequest into OpenAI-compatible request payload."""
         messages_list = [
@@ -163,12 +175,11 @@ class LlamaCppProvider(BaseProvider):
             for msg in request.messages
         ]
 
-        # Use the requested model_id or first alias or canonical ID
-        selected_model = request.model_id
+        runtime_model = self._resolve_runtime_model_id(request, model_def)
         opts = request.options
 
         payload: Dict[str, Any] = {
-            "model": selected_model,
+            "model": runtime_model,
             "messages": messages_list,
             "temperature": opts.temperature,
             "top_p": opts.top_p,

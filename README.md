@@ -8,17 +8,17 @@ The goal is to provide a stable local AI infrastructure layer so applications ca
 
 ## Current architecture
 
-Application
+Workflows / Applications
     ↓
-AI Foundation
+Inference Connector
     ↓
-Inference Adapter
+Foundation Core
     ↓
-Inference Runtime
+Provider / Runtime Layer
     ↓
 Local Model
     ↓
-GPU / CPU
+GPU / Hardware
 
 The first implemented inference runtime is llama.cpp using GGUF models.
 
@@ -57,9 +57,13 @@ Local inference is working.
 ## Repository layout
 
 core/
+    common/
     config/
     inference/
     models/
+
+connectors/
+workflows/
 
 adapters/
     llama_cpp/

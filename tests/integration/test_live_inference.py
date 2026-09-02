@@ -48,3 +48,31 @@ def test_live_llama_server_inference():
     assert response.usage.prompt_tokens > 0
     assert response.usage.completion_tokens > 0
     assert response.latency_ms > 0
+
+
+@pytest.mark.integration
+def test_live_llama_server_infer_prompt_with_alias():
+    """Verify end-to-end inference using infer_prompt() and a Foundation alias."""
+    repo_root = Path(__file__).parent.parent.parent.resolve()
+    core = FoundationCore.create(repo_root=repo_root)
+
+    provider = core.provider_manager.get_provider("llama_cpp")
+    health = provider.check_health()
+    if health != RuntimeState.READY:
+        pytest.skip(f"llama-server is not running at {provider.base_url}")
+
+    model_def = core.registry.get_model("default")
+    if not provider.is_model_loaded(model_def):
+        pytest.skip(f"Model '{model_def.id}' is not reported as loaded by llama-server.")
+
+    response = core.infer_prompt(
+        model_id="default",
+        prompt="Reply with: Alias routing works.",
+        options=GenerationOptions(temperature=0.1, max_tokens=32),
+    )
+
+    assert response.model_id == "qwen3.5-9b"
+    assert len(response.text.strip()) > 0
+    assert response.finish_reason == FinishReason.STOP
+    assert response.usage.total_tokens > 0
+    assert response.latency_ms > 0
