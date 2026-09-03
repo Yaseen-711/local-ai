@@ -197,7 +197,15 @@ class LlamaCppProvider(BaseProvider):
         if opts.extra_options:
             payload.update(opts.extra_options)
 
+        # Translate declarative OutputConstraint to provider runtime parameters
+        if opts.constraint is not None:
+            if opts.constraint.format == "json":
+                payload["response_format"] = {"type": "json_object"}
+            elif opts.constraint.format == "grammar" and opts.constraint.grammar:
+                payload["grammar"] = opts.constraint.grammar
+
         return payload
+
 
     def _normalize_response(
         self,

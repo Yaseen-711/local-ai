@@ -5,6 +5,12 @@
 The Local AI Foundation is a self-hosted, modular infrastructure layer designed to decouple consumer applications (code review, data analysis, document extraction, RAG, reports, agents, and chat) from underlying model formats, inference runtimes, and deployment topologies.
 
 ```text
+Application Entry Points (CLI / API / UI / Scripts / Agents)
+        │  bootstrap via
+        ▼
+AppContext (`apps.AppContext`) – Composition Root & Workflow Factory
+        │  provides InferenceConnector to
+        ▼
 Workflows / Applications (`workflows/`)
         │
         ▼
@@ -53,10 +59,12 @@ Models & Hardware (GGUF / CUDA 12.8 / NVIDIA RTX 5070)
 
 ### 3.2 Inference Contracts (`core.inference.types`)
 * `Message`: Structured message representation (`MessageRole.SYSTEM`, `USER`, `ASSISTANT`, `TOOL`).
-* `GenerationOptions`: Normalized parameters (`temperature`, `top_p`, `max_tokens`, `stop_sequences`, `seed`).
+* `OutputConstraint`: Declarative structural constraint on token generation (`format="json"`, or `from_grammar(...)`). Decouples generation-time syntax constraints from domain semantics.
+* `GenerationOptions`: Normalized parameters (`temperature`, `top_p`, `max_tokens`, `stop_sequences`, `seed`, `constraint`, `extra_options`).
 * `InferenceRequest`: Normalized container for model ID, messages list, and generation options.
 * `TokenUsage`: Normalized accounting (`prompt_tokens`, `completion_tokens`, `total_tokens`).
-* `InferenceResponse`: Normalized output with generated message, finish reason (`FinishReason.STOP`, `LENGTH`), token usage, latency (ms), and optional diagnostic `raw_response`.
+* `InferenceResponse`: Normalized output with generated message (strictly raw text in `message.content`), finish reason (`FinishReason.STOP`, `LENGTH`), token usage, latency (ms), and optional diagnostic `raw_response`.
+
 
 ---
 
@@ -346,9 +354,147 @@ Testing substitutes the connector:
   Assert on WorkflowResult
 ```
 
+### Reference Implementation: `TextAnalysisWorkflow`
+
+`TextAnalysisWorkflow` (`workflows/text_analysis.py`) serves as the canonical reference implementation demonstrating the workflow layer conventions:
+
+1. **Constructor Dependency Injection**:
+   ```python
+   workflow = TextAnalysisWorkflow(inference=connector)
+   ```
+   Accepts any object conforming to the structural `InferenceConnector` protocol. In production, this receives `FoundationInferenceConnector(core)`. In tests, it receives a duck-typed fake or mock.
+2. **Single-Pass (`QUICK`) vs Two-Pass (`DETAILED`) Execution**:
+   * `AnalysisDepth.QUICK`: Executes 1 inference call generating a concise summary and extracted key points.
+   * `AnalysisDepth.DETAILED`: Executes 2 sequential inference calls:
+     1. *Phase 1 (Extraction)*: Extracts factual findings and core takeaways.
+     2. *Phase 2 (Synthesis)*: Injects the extracted findings alongside the original text to synthesize a comprehensive executive summary.
+3. **Accurate Metric Aggregation**:
+   Combines token accounting across passes using the normalized `TokenUsage` contract (`prompt_tokens`, `completion_tokens`, `total_tokens`) and tracks `total_inference_latency_ms` without conflating inference latency with workflow overhead.
+4. **Contextual Error Wrapping**:
+   Catches infrastructure exceptions (`ModelNotFoundError`, `ProviderUnavailableError`, `InferenceError`) and wraps them in `WorkflowError` with phase-specific context (e.g. `Text analysis failed during extraction phase`), while preserving the original cause via exception chaining (`raise WorkflowError(...) from exc`).
+5. **Hardware & Runtime Agnostic**:
+   The workflow contains zero knowledge of CUDA, NVIDIA, Linux, VRAM, or `llama.cpp`. It depends purely on `InferenceConnector` and normalized data contracts, allowing seamless operation across diverse future hardware environments.
+6. **Optional Structured Generation & Domain Validation**:
+   Employs provider-neutral `OutputConstraint.json()` in `GenerationOptions` to request structural syntax constraints from the backend runtime. Decodes model output with generic `core.common.parsing.parse_json_payload`, followed by strict domain type validation (`summary` as `str`, `key_points` as `List[str]`), while preserving resilient plain-text fallback for unconstrained or legacy outputs.
+
 ---
+
 
 ## 9. Testing Strategy
 
-* **Unit Tests (`tests/unit/`)**: Fast, pure CPU tests with zero GPU, model weight, or live server dependencies. Covers TOML parsing, contracts, registry, provider routing, runtime ID mapping, connector delegation/error propagation, and workflow contract/convention verification. Executes in < 0.2s.
-* **Integration Tests (`tests/integration/`)**: Opt-in tests verifying live communication when `llama-server` is started (`scripts/start_llama_server.sh`). Skips cleanly when the server is offline.
+* **Unit Tests (`tests/unit/`)**: Fast, pure CPU tests with zero GPU, model weight, or live server dependencies. Covers TOML parsing, contracts, registry, provider routing, runtime ID mapping, connector delegation/error propagation, workflow contracts, the `TextAnalysisWorkflow` reference implementation, and the `AppContext` composition root. Executes in < 0.2s.
+* **Integration Tests (`tests/integration/`)**: Opt-in tests verifying live communication when `llama-server` is started (`scripts/start_llama_server.sh`). Verifies both raw provider inference and end-to-end multi-pass workflow execution (`TextAnalysisWorkflow`) against live models. Skips cleanly when the server is offline.
+
+---
+
+## 10. Application & Composition Layer (`apps/`)
+
+### Design Goal
+
+Application entry points (CLI tools, HTTP APIs, UI applications, standalone scripts, agent systems) need to bootstrap `FoundationCore`, wire it to an `InferenceConnector`, and then obtain domain workflow instances. Without a composition helper, every entry point repeats the same 3-line wiring sequence and is responsible for correct path resolution.
+
+The `apps/` package provides a **minimal, typed Composition Root** that eliminates this duplication without introducing a framework, inversion-of-control container, or global mutable singletons.
+
+### Design Rules
+
+1. **Strict Downward Dependency**: `core/`, `connectors/`, and `workflows/` must **never** import `apps/`. The dependency arrow points only downward.
+2. **No Domain Logic**: `AppContext` does not construct prompts, parse model outputs, or implement business rules. It only composes and provides access to the components that do.
+3. **Framework-Agnostic**: No runtime dependency on FastAPI, Click, Streamlit, or any other application framework. `AppContext` is a plain frozen dataclass usable from any consumer.
+4. **Optional**: Advanced consumers can still instantiate `FoundationCore` and `FoundationInferenceConnector` directly. `AppContext` is a convenience, not a requirement.
+5. **OS & Hardware Portable**: All path resolution is delegated to `FoundationCore.create()`, ensuring identical behaviour on Linux, macOS, and Windows.
+
+### `AppContext` API
+
+```python
+from apps import AppContext
+
+# --- Bootstrap (once per process / server startup) ---
+ctx = AppContext.create()                    # uses Path.cwd() as repo root
+ctx = AppContext.create(repo_root="/path")   # explicit root
+
+# --- Custom connector (alternate provider or test mock) ---
+ctx = AppContext(core=my_core, inference=my_connector)
+
+# --- Workflow Factory ---
+workflow = ctx.create_text_analysis_workflow()
+result   = workflow.analyze("Input text...")
+```
+
+### Usage by Consumer Type
+
+#### Python Scripts & Notebooks
+```python
+from apps import AppContext
+
+ctx      = AppContext.create()
+workflow = ctx.create_text_analysis_workflow()
+result   = workflow.analyze("Quarterly financial report...")
+print(result.output.summary)
+```
+
+#### CLI Applications (Click / Typer / argparse)
+```python
+import click
+from apps import AppContext
+
+@click.group()
+@click.pass_context
+def cli(ctx):
+    ctx.obj = AppContext.create()
+
+@cli.command()
+@click.argument("text")
+@click.pass_obj
+def analyze(app_ctx: AppContext, text: str):
+    result = app_ctx.create_text_analysis_workflow().analyze(text)
+    click.echo(result.output.summary)
+```
+
+#### HTTP REST APIs (FastAPI)
+```python
+from contextlib import asynccontextmanager
+from fastapi import FastAPI
+from apps import AppContext
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    app.state.ctx = AppContext.create()
+    yield
+
+app = FastAPI(lifespan=lifespan)
+```
+
+#### UI Apps (Streamlit / Gradio)
+```python
+import streamlit as st
+from apps import AppContext
+
+@st.cache_resource
+def get_context():
+    return AppContext.create()
+
+ctx      = get_context()
+workflow = ctx.create_text_analysis_workflow()
+```
+
+#### Agent & Tool Systems
+```python
+from apps import AppContext
+
+class TextAnalysisTool:
+    def __init__(self, ctx: AppContext):
+        self._workflow = ctx.create_text_analysis_workflow()
+
+    def run(self, text: str) -> str:
+        return self._workflow.analyze(text).output.summary
+```
+
+### Responsibility Boundary Table
+
+| Layer | Responsible For | Must NOT Do |
+|---|---|---|
+| **Consumer App** | CLI parsing, HTTP I/O, UI rendering, user sessions | Directly load TOML files or HTTP provider clients |
+| **`AppContext`** | Wires Core + Connector once; typed workflow factory | Domain logic, prompt construction, output parsing |
+| **`workflows/`** | Validation, prompts, multi-pass inference, parsing, metrics | Process lifecycle, CLI flags, HTTP I/O |
+| **`connectors/`** | Capability gateway Protocol | Workflow logic, application lifecycle |
+| **`core/`** | Model registry, provider selection, runtime HTTP | Import `apps/`, `workflows/`, or `connectors/` |

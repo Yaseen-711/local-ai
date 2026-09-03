@@ -19,6 +19,7 @@ from core.common.errors import (
     ProviderNotFoundError,
     ProviderResponseError,
     ProviderUnavailableError,
+    SyntaxParsingError,
     WorkflowError,
 )
 
@@ -39,5 +40,6 @@ __all__ = [
     "ProviderResponseError",
     "InferenceError",
     "LifecycleConflictError",
+    "SyntaxParsingError",
     "WorkflowError",
 ]

@@ -8,6 +8,7 @@ from core.inference.types import (
     InferenceRequest,
     InferenceResponse,
     Message,
+    OutputConstraint,
     TokenUsage,
 )
 
@@ -17,6 +18,7 @@ __all__ = [
     "LlamaCppProvider",
     "Message",
     "GenerationOptions",
+    "OutputConstraint",
     "InferenceRequest",
     "TokenUsage",
     "InferenceResponse",

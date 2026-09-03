@@ -18,8 +18,10 @@ from core.inference.types import (
     GenerationOptions,
     InferenceRequest,
     Message,
+    OutputConstraint,
 )
 from core.models.schema import ModelCapabilities, ModelDefinition
+
 
 
 @pytest.fixture
@@ -248,3 +250,44 @@ def test_is_model_loaded(mock_urlopen, mock_model_def):
     mock_payload_other = {"data": [{"id": "other-model-7b"}]}
     mock_resp.read.return_value = json.dumps(mock_payload_other).encode("utf-8")
     assert provider.is_model_loaded(mock_model_def) is False
+
+
+def test_build_payload_with_json_constraint(mock_model_def):
+    """Verify that OutputConstraint.json() adds response_format json_object to payload."""
+    provider = LlamaCppProvider()
+    req = InferenceRequest(
+        model_id="qwen3.5-9b",
+        messages=[Message.user("Generate JSON")],
+        options=GenerationOptions(constraint=OutputConstraint.json()),
+    )
+    payload = provider._build_payload(req, mock_model_def)
+    assert payload.get("response_format") == {"type": "json_object"}
+    assert "grammar" not in payload
+
+
+def test_build_payload_with_grammar_constraint(mock_model_def):
+    """Verify that OutputConstraint.from_grammar() adds grammar string to payload."""
+    provider = LlamaCppProvider()
+    grammar_str = 'root ::= "yes" | "no"'
+    req = InferenceRequest(
+        model_id="qwen3.5-9b",
+        messages=[Message.user("Binary choice")],
+        options=GenerationOptions(constraint=OutputConstraint.from_grammar(grammar_str)),
+    )
+    payload = provider._build_payload(req, mock_model_def)
+    assert payload.get("grammar") == grammar_str
+    assert "response_format" not in payload
+
+
+
+def test_build_payload_without_constraint_has_no_response_format(mock_model_def):
+    """Verify that default unconstrained generation does not inject response_format or grammar."""
+    provider = LlamaCppProvider()
+    req = InferenceRequest(
+        model_id="qwen3.5-9b",
+        messages=[Message.user("Explain recursion")],
+        options=GenerationOptions(constraint=None),
+    )
+    payload = provider._build_payload(req, mock_model_def)
+    assert "response_format" not in payload
+    assert "grammar" not in payload

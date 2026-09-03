@@ -65,3 +65,15 @@ class WorkflowError(FoundationError):
     via standard Python exception chaining (raise WorkflowError(...) from cause).
     """
     pass
+
+
+class SyntaxParsingError(FoundationError):
+    """Raised when parsing raw model output into a structured representation fails.
+
+    Preserves the unparsed raw text and error details for debugging.
+    """
+
+    def __init__(self, message: str, raw_text: str = "", details: str = "") -> None:
+        super().__init__(message)
+        self.raw_text = raw_text
+        self.details = details

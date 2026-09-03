@@ -35,6 +35,29 @@ class Message:
 
 
 @dataclass(frozen=True)
+class OutputConstraint:
+    """Declarative constraint on model token generation.
+
+    Decouples the generation-time structural constraint (e.g. JSON mode, grammar)
+    from downstream domain semantics.
+    """
+    format: str
+    grammar: Optional[str] = None
+
+
+    @classmethod
+    def json(cls) -> "OutputConstraint":
+        """Convenience constructor for JSON-constrained generation."""
+        return cls(format="json")
+
+    @classmethod
+    def from_grammar(cls, grammar_text: str) -> "OutputConstraint":
+        """Convenience constructor for grammar-constrained generation."""
+        return cls(format="grammar", grammar=grammar_text)
+
+
+
+@dataclass(frozen=True)
 class GenerationOptions:
     """Normalized generation options for inference execution."""
     temperature: float = 0.7
@@ -42,7 +65,9 @@ class GenerationOptions:
     max_tokens: int = 1024
     stop_sequences: List[str] = field(default_factory=list)
     seed: Optional[int] = None
+    constraint: Optional[OutputConstraint] = None
     extra_options: Dict[str, Any] = field(default_factory=dict)
+
 
 
 @dataclass(frozen=True)

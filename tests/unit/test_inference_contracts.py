@@ -33,8 +33,10 @@ from core.inference.types import (
     InferenceRequest,
     InferenceResponse,
     Message,
+    OutputConstraint,
     TokenUsage,
 )
+
 
 
 def test_model_enums():
@@ -158,3 +160,24 @@ def test_inference_response():
     assert response.usage.total_tokens == 75
     assert response.latency_ms == 124.5
     assert response.raw_response["id"] == "chatcmpl-123"
+
+
+def test_output_constraint_explicit_constructors():
+    """Verify explicit factory constructors for OutputConstraint."""
+    json_constraint = OutputConstraint.json()
+    assert json_constraint.format == "json"
+    assert json_constraint.grammar is None
+
+    grammar_constraint = OutputConstraint.from_grammar('root ::= "true" | "false"')
+    assert grammar_constraint.format == "grammar"
+    assert grammar_constraint.grammar == 'root ::= "true" | "false"'
+
+    direct_constraint = OutputConstraint(format="yaml")
+    assert direct_constraint.format == "yaml"
+    assert direct_constraint.grammar is None
+
+
+def test_output_constraint_requires_explicit_format():
+    """Verify that bare OutputConstraint() without format raises TypeError."""
+    with pytest.raises(TypeError, match="missing 1 required positional argument: 'format'|missing required argument 'format'"):
+        OutputConstraint()  # type: ignore[call-arg]

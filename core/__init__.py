@@ -12,6 +12,7 @@ from core.common.errors import (
     ProviderNotFoundError,
     ProviderResponseError,
     ProviderUnavailableError,
+    SyntaxParsingError,
     WorkflowError,
 )
 from core.common.types import (
@@ -40,8 +41,10 @@ from core.inference.types import (
     InferenceRequest,
     InferenceResponse,
     Message,
+    OutputConstraint,
     TokenUsage,
 )
+
 from core.models.registry import ModelRegistry
 from core.models.schema import (
     AvailabilityInfo,
@@ -70,6 +73,7 @@ __all__ = [
     "ProviderResponseError",
     "InferenceError",
     "LifecycleConflictError",
+    "SyntaxParsingError",
     "WorkflowError",
     # Config & Settings
     "load_model_definition",
@@ -89,6 +93,7 @@ __all__ = [
     "LlamaCppProvider",
     "Message",
     "GenerationOptions",
+    "OutputConstraint",
     "InferenceRequest",
     "TokenUsage",
     "InferenceResponse",
