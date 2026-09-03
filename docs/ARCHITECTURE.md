@@ -59,11 +59,12 @@ Models & Hardware (GGUF / CUDA 12.8 / NVIDIA RTX 5070)
 
 ### 3.2 Inference Contracts (`core.inference.types`)
 * `Message`: Structured message representation (`MessageRole.SYSTEM`, `USER`, `ASSISTANT`, `TOOL`).
-* `OutputConstraint`: Declarative structural constraint on token generation (`format="json"`, or `from_grammar(...)`). Decouples generation-time syntax constraints from domain semantics.
-* `GenerationOptions`: Normalized parameters (`temperature`, `top_p`, `max_tokens`, `stop_sequences`, `seed`, `constraint`, `extra_options`).
+* `OutputConstraint`: Declarative structural constraint on token generation (`format="json"`, or `from_grammar(...)`). Requires an explicit format; unsupported formats are rejected by providers.
+* `GenerationOptions`: Normalized parameters (`temperature`, `top_p`, `max_tokens`, `stop_sequences`, `seed`, `constraint`, `extra_options`). Enforces universal invariants via `__post_init__`: finite non-negative `temperature`, finite `top_p` in `[0.0, 1.0]`, positive integer `max_tokens > 0`, and integer `seed`. Does not impose runtime-specific sentinel semantics.
 * `InferenceRequest`: Normalized container for model ID, messages list, and generation options.
 * `TokenUsage`: Normalized accounting (`prompt_tokens`, `completion_tokens`, `total_tokens`).
 * `InferenceResponse`: Normalized output with generated message (strictly raw text in `message.content`), finish reason (`FinishReason.STOP`, `LENGTH`), token usage, latency (ms), and optional diagnostic `raw_response`.
+
 
 
 ---
@@ -134,6 +135,13 @@ Higher-Level Workflows (Chat, RAG, Agents, Tool Pipelines, Code Review, Document
    The provider owns translation from Foundation model identities/aliases to runtime-specific model identifiers. Foundation-only aliases (such as `"default"` or `"general"`) are resolved to canonical definitions, and the provider sends the verified server identifier to the backend runtime.
 4. **Strict Error Boundary (No Silent Fallbacks)**:
    The execution layer reliably reports failure domains (`ModelNotFoundError`, `ProviderNotFoundError`, `ProviderUnavailableError`, `InferenceError`, `ProviderResponseError`). It **does not** silently guess or fall back to another model. Higher-level orchestration layers retain explicit authority over retry, fallback, or error recovery strategies.
+5. **Provider Contract Hardening**:
+   * `base_url` must use `http://` or `https://` schemes (`ConfigurationError`).
+   * Bounded HTTP response read: memory consumption is strictly capped via `max_response_bytes` (defaults to 10 MiB, positive integer validated; raises `ProviderResponseError` on overflow).
+   * Reserved-key protection: `extra_options` cannot collide with normalized parameters (`InferenceError`).
+   * Constraint enforcement: unsupported `OutputConstraint` formats are rejected pre-flight (`InferenceError`).
+   * Telemetry validation: absent/null usage fields default to 0, while corrupt non-numeric fields raise `ProviderResponseError`.
+
 
 ---
 
@@ -371,11 +379,14 @@ Testing substitutes the connector:
 3. **Accurate Metric Aggregation**:
    Combines token accounting across passes using the normalized `TokenUsage` contract (`prompt_tokens`, `completion_tokens`, `total_tokens`) and tracks `total_inference_latency_ms` without conflating inference latency with workflow overhead.
 4. **Contextual Error Wrapping**:
-   Catches infrastructure exceptions (`ModelNotFoundError`, `ProviderUnavailableError`, `InferenceError`) and wraps them in `WorkflowError` with phase-specific context (e.g. `Text analysis failed during extraction phase`), while preserving the original cause via exception chaining (`raise WorkflowError(...) from exc`).
+   Catches infrastructure exceptions (`ModelNotFoundError`, `ProviderError`, covering `ProviderUnavailableError`, `InferenceError`, and `ProviderResponseError`) and wraps them in `WorkflowError` with phase-specific context (e.g. `Text analysis failed during extraction phase`), while preserving the original cause via exception chaining (`raise WorkflowError(...) from exc`).
 5. **Hardware & Runtime Agnostic**:
    The workflow contains zero knowledge of CUDA, NVIDIA, Linux, VRAM, or `llama.cpp`. It depends purely on `InferenceConnector` and normalized data contracts, allowing seamless operation across diverse future hardware environments.
 6. **Optional Structured Generation & Domain Validation**:
-   Employs provider-neutral `OutputConstraint.json()` in `GenerationOptions` to request structural syntax constraints from the backend runtime. Decodes model output with generic `core.common.parsing.parse_json_payload`, followed by strict domain type validation (`summary` as `str`, `key_points` as `List[str]`), while preserving resilient plain-text fallback for unconstrained or legacy outputs.
+   Employs provider-neutral `OutputConstraint.json()` in `GenerationOptions` to request structural syntax constraints from the backend runtime. Decodes model output with generic `core.common.parsing.parse_json_payload` (using a deterministic syntactic heuristic to evaluate candidate code blocks from last to first), followed by strict domain type validation (`summary` as `str`, `key_points` as `List[str]`), while preserving resilient plain-text fallback for unconstrained or legacy outputs.
+7. **Explicit Trust Boundaries & Data Delimiters**:
+   Utilizes `system_prompt` to establish clear instruction and schema constraints, instructing the model to treat all data within source and findings blocks strictly as untrusted data to analyze. Inputs and intermediate findings are wrapped in explicit structural delimiters (`[SOURCE TEXT TO ANALYZE]`, `[EXTRACTED FINDINGS (UNTRUSTED DATA)]`) to establish clear data/instruction boundaries during multi-pass execution.
+
 
 ---
 

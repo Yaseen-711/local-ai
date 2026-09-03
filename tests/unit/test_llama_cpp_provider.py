@@ -8,10 +8,12 @@ import urllib.error
 import pytest
 
 from core.common.errors import (
+    ConfigurationError,
     InferenceError,
     ProviderResponseError,
     ProviderUnavailableError,
 )
+
 from core.common.types import FinishReason, MessageRole, ModelFormat, RuntimeState
 from core.inference.providers.llama_cpp import LlamaCppProvider
 from core.inference.types import (
@@ -291,3 +293,182 @@ def test_build_payload_without_constraint_has_no_response_format(mock_model_def)
     payload = provider._build_payload(req, mock_model_def)
     assert "response_format" not in payload
     assert "grammar" not in payload
+
+
+def test_base_url_scheme_validation():
+    """Verify base_url scheme validation in LlamaCppProvider."""
+    # Valid http and https
+    p1 = LlamaCppProvider(base_url="http://127.0.0.1:8080")
+    assert p1.base_url == "http://127.0.0.1:8080"
+
+    p2 = LlamaCppProvider(base_url="https://remote-llm.internal:8443")
+    assert p2.base_url == "https://remote-llm.internal:8443"
+
+    # Invalid schemes and formats
+    with pytest.raises(ConfigurationError, match="requires an 'http://' or 'https://' URL"):
+        LlamaCppProvider(base_url="file:///etc/passwd")
+
+    with pytest.raises(ConfigurationError, match="requires an 'http://' or 'https://' URL"):
+        LlamaCppProvider(base_url="ftp://example.com")
+
+    with pytest.raises(ConfigurationError, match="requires an 'http://' or 'https://' URL"):
+        LlamaCppProvider(base_url="")
+
+
+def test_max_response_bytes_validation():
+    """Verify max_response_bytes validation at provider boundary."""
+    p = LlamaCppProvider(max_response_bytes=1024)
+    assert p.max_response_bytes == 1024
+
+    with pytest.raises(ConfigurationError, match="max_response_bytes must be a positive integer"):
+        LlamaCppProvider(max_response_bytes=0)
+
+    with pytest.raises(ConfigurationError, match="max_response_bytes must be a positive integer"):
+        LlamaCppProvider(max_response_bytes=-100)
+
+    with pytest.raises(ConfigurationError, match="max_response_bytes must be a positive integer"):
+        LlamaCppProvider(max_response_bytes=True)  # type: ignore[arg-type]
+
+
+def test_extra_options_reserved_keys_rejected(mock_model_def):
+    """Verify that passing reserved normalized keys in extra_options raises InferenceError."""
+    provider = LlamaCppProvider()
+
+    reserved_samples = ["model", "messages", "stream", "temperature", "response_format", "grammar"]
+    for key in reserved_samples:
+        req = InferenceRequest(
+            model_id="qwen3.5-9b",
+            messages=[Message.user("Hello")],
+            options=GenerationOptions(extra_options={key: "rogue_value"}),
+        )
+        with pytest.raises(InferenceError, match="extra_options cannot override normalized parameter"):
+            provider._build_payload(req, mock_model_def)
+
+
+def test_extra_options_unreserved_keys_allowed(mock_model_def):
+    """Verify that unreserved backend-specific keys in extra_options are merged cleanly."""
+    provider = LlamaCppProvider()
+    req = InferenceRequest(
+        model_id="qwen3.5-9b",
+        messages=[Message.user("Hello")],
+        options=GenerationOptions(extra_options={"mirostat": 2, "mirostat_tau": 5.0}),
+    )
+    payload = provider._build_payload(req, mock_model_def)
+    assert payload.get("mirostat") == 2
+    assert payload.get("mirostat_tau") == 5.0
+
+
+def test_unsupported_constraint_format_rejected(mock_model_def):
+    """Verify that an unsupported OutputConstraint format raises InferenceError."""
+    provider = LlamaCppProvider()
+    req = InferenceRequest(
+        model_id="qwen3.5-9b",
+        messages=[Message.user("Hello")],
+        options=GenerationOptions(constraint=OutputConstraint(format="yaml")),
+    )
+    with pytest.raises(InferenceError, match="does not support OutputConstraint format 'yaml'"):
+        provider._build_payload(req, mock_model_def)
+
+
+def test_empty_grammar_constraint_rejected(mock_model_def):
+    """Verify that grammar constraint with empty text raises InferenceError."""
+    provider = LlamaCppProvider()
+    req = InferenceRequest(
+        model_id="qwen3.5-9b",
+        messages=[Message.user("Hello")],
+        options=GenerationOptions(constraint=OutputConstraint(format="grammar", grammar="")),
+    )
+    with pytest.raises(InferenceError, match="requires non-empty grammar text"):
+        provider._build_payload(req, mock_model_def)
+
+
+@patch("urllib.request.urlopen")
+def test_bounded_response_size_exceeded_raises_provider_response_error(mock_urlopen, mock_model_def):
+    """Verify that responses exceeding max_response_bytes raise ProviderResponseError."""
+    provider = LlamaCppProvider(max_response_bytes=50)
+    req = InferenceRequest.from_prompt(model_id="qwen3.5-9b", prompt="Hello")
+
+    # Simulate response stream providing 51 bytes when limit is 50
+    mock_resp = MagicMock()
+    mock_resp.status = 200
+    mock_resp.read.return_value = b"x" * 51
+    mock_resp.__enter__.return_value = mock_resp
+    mock_resp.__exit__.return_value = None
+    mock_urlopen.return_value = mock_resp
+
+    with pytest.raises(ProviderResponseError, match="exceeded maximum allowed size of 50 bytes"):
+        provider.infer(req, mock_model_def)
+
+
+@patch("urllib.request.urlopen")
+def test_token_usage_absent_and_none_defaults_to_zero(mock_urlopen, mock_model_def):
+    """Verify that absent or null token usage fields normalize safely to 0."""
+    provider = LlamaCppProvider()
+    req = InferenceRequest.from_prompt(model_id="qwen3.5-9b", prompt="Hello")
+
+    # Case 1: usage dict has None values
+    payload1 = {
+        "choices": [{"message": {"role": "assistant", "content": "Hi"}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": None, "completion_tokens": None},
+    }
+    mock_resp = MagicMock()
+    mock_resp.status = 200
+    mock_resp.read.return_value = json.dumps(payload1).encode("utf-8")
+    mock_resp.__enter__.return_value = mock_resp
+    mock_resp.__exit__.return_value = None
+    mock_urlopen.return_value = mock_resp
+
+    resp1 = provider.infer(req, mock_model_def)
+    assert resp1.usage.prompt_tokens == 0
+    assert resp1.usage.completion_tokens == 0
+    assert resp1.usage.total_tokens == 0
+
+    # Case 2: usage key is completely missing
+    payload2 = {
+        "choices": [{"message": {"role": "assistant", "content": "Hi"}, "finish_reason": "stop"}],
+    }
+    mock_resp.read.return_value = json.dumps(payload2).encode("utf-8")
+    resp2 = provider.infer(req, mock_model_def)
+    assert resp2.usage.prompt_tokens == 0
+    assert resp2.usage.completion_tokens == 0
+    assert resp2.usage.total_tokens == 0
+
+
+@patch("urllib.request.urlopen")
+def test_token_usage_corrupt_non_numeric_raises_provider_response_error(mock_urlopen, mock_model_def):
+    """Verify that corrupt non-numeric token usage raises ProviderResponseError instead of silent coercion."""
+    provider = LlamaCppProvider()
+    req = InferenceRequest.from_prompt(model_id="qwen3.5-9b", prompt="Hello")
+
+    mock_resp = MagicMock()
+    mock_resp.status = 200
+    mock_resp.__enter__.return_value = mock_resp
+    mock_resp.__exit__.return_value = None
+    mock_urlopen.return_value = mock_resp
+
+    # Corrupt string value
+    payload_corrupt_str = {
+        "choices": [{"message": {"role": "assistant", "content": "Hi"}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": "corrupted_non_int"},
+    }
+    mock_resp.read.return_value = json.dumps(payload_corrupt_str).encode("utf-8")
+    with pytest.raises(ProviderResponseError, match="Malformed non-numeric token usage"):
+        provider.infer(req, mock_model_def)
+
+    # Boolean value
+    payload_bool = {
+        "choices": [{"message": {"role": "assistant", "content": "Hi"}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": True},
+    }
+    mock_resp.read.return_value = json.dumps(payload_bool).encode("utf-8")
+    with pytest.raises(ProviderResponseError, match="Invalid boolean value for token usage"):
+        provider.infer(req, mock_model_def)
+
+    # Negative integer value
+    payload_negative = {
+        "choices": [{"message": {"role": "assistant", "content": "Hi"}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": -5},
+    }
+    mock_resp.read.return_value = json.dumps(payload_negative).encode("utf-8")
+    with pytest.raises(ProviderResponseError, match="Negative token usage value"):
+        provider.infer(req, mock_model_def)

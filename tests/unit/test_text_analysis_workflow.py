@@ -7,9 +7,11 @@ from connectors import InferenceConnector
 from core.common.errors import (
     InferenceError,
     ModelNotFoundError,
+    ProviderResponseError,
     ProviderUnavailableError,
     WorkflowError,
 )
+
 from core.common.types import FinishReason, MessageRole
 from core.inference.types import (
     GenerationOptions,
@@ -331,6 +333,78 @@ def test_unrelated_exception_not_swallowed():
 
     with pytest.raises(TypeError, match="Unexpected argument error"):
         workflow.analyze("Some text")
+
+
+def test_provider_response_error_wrapped_in_quick_analysis():
+    """Verify ProviderResponseError (e.g. malformed response) is wrapped in WorkflowError with cause."""
+    mock_connector = MagicMock()
+    provider_err = ProviderResponseError("Server returned invalid non-JSON payload")
+    mock_connector.infer_prompt.side_effect = provider_err
+
+    workflow = TextAnalysisWorkflow(inference=mock_connector)
+
+    with pytest.raises(WorkflowError, match="Text analysis failed during analysis phase") as exc_info:
+        workflow.analyze("Source text")
+
+    assert exc_info.value.__cause__ is provider_err
+
+
+def test_provider_response_error_wrapped_in_detailed_phases():
+    """Verify ProviderResponseError in both phases of detailed analysis wraps with phase context."""
+    mock_connector = MagicMock()
+    provider_err = ProviderResponseError("Invalid choices format")
+
+    # Phase 1 failure
+    mock_connector.infer_prompt.side_effect = provider_err
+    workflow = TextAnalysisWorkflow(inference=mock_connector)
+
+    with pytest.raises(WorkflowError, match="Text analysis failed during extraction phase") as exc_info:
+        workflow.analyze("Source text", options=AnalysisOptions(depth=AnalysisDepth.DETAILED))
+    assert exc_info.value.__cause__ is provider_err
+
+    # Phase 2 failure
+    mock_connector.infer_prompt.side_effect = [
+        _make_mock_response("- Extracted fact"),
+        provider_err,
+    ]
+    with pytest.raises(WorkflowError, match="Text analysis failed during synthesis phase") as exc_info2:
+        workflow.analyze("Source text", options=AnalysisOptions(depth=AnalysisDepth.DETAILED))
+    assert exc_info2.value.__cause__ is provider_err
+
+
+def test_prompt_construction_delimiters_and_system_prompt():
+    """Verify prompt structural delimiters and system_prompt instruction boundary."""
+    mock_connector = MagicMock()
+    mock_connector.infer_prompt.return_value = _make_mock_response(
+        '{"summary": "Safe summary", "key_points": ["Safe point"]}'
+    )
+
+    workflow = TextAnalysisWorkflow(inference=mock_connector)
+
+    # 1. Quick mode
+    workflow.analyze("Sample input text", options=AnalysisOptions(depth=AnalysisDepth.QUICK))
+    quick_call = mock_connector.infer_prompt.call_args
+    assert quick_call.kwargs["system_prompt"] is not None
+    assert "untrusted data" in quick_call.kwargs["system_prompt"]
+    assert "[SOURCE TEXT TO ANALYZE]" in quick_call.kwargs["prompt"]
+    assert "[/SOURCE TEXT TO ANALYZE]" in quick_call.kwargs["prompt"]
+
+    # 2. Detailed mode
+    mock_connector.reset_mock()
+    mock_connector.infer_prompt.side_effect = [
+        _make_mock_response('{"key_points": ["Fact 1"]}'),
+        _make_mock_response('{"summary": "Synthesized summary"}'),
+    ]
+    workflow.analyze("Detailed input text", options=AnalysisOptions(depth=AnalysisDepth.DETAILED))
+    assert mock_connector.infer_prompt.call_count == 2
+    phase1_call = mock_connector.infer_prompt.call_args_list[0]
+    phase2_call = mock_connector.infer_prompt.call_args_list[1]
+
+    assert "[SOURCE TEXT TO ANALYZE]" in phase1_call.kwargs["prompt"]
+    assert "[EXTRACTED FINDINGS (UNTRUSTED DATA)]" in phase2_call.kwargs["prompt"]
+    assert "[ORIGINAL SOURCE TEXT (UNTRUSTED DATA)]" in phase2_call.kwargs["prompt"]
+    assert "untrusted data" in phase2_call.kwargs["system_prompt"]
+
 
 
 # ---------------------------------------------------------------------------

@@ -181,3 +181,80 @@ def test_output_constraint_requires_explicit_format():
     """Verify that bare OutputConstraint() without format raises TypeError."""
     with pytest.raises(TypeError, match="missing 1 required positional argument: 'format'|missing required argument 'format'"):
         OutputConstraint()  # type: ignore[call-arg]
+
+
+def test_generation_options_validation_valid():
+    """Verify default and valid custom GenerationOptions construct cleanly."""
+    default_opts = GenerationOptions()
+    assert default_opts.temperature == 0.7
+    assert default_opts.top_p == 0.95
+    assert default_opts.max_tokens == 1024
+    assert default_opts.seed is None
+
+    custom_opts = GenerationOptions(
+        temperature=0.0,
+        top_p=1.0,
+        max_tokens=1,
+        seed=-42,
+    )
+    assert custom_opts.temperature == 0.0
+    assert custom_opts.top_p == 1.0
+    assert custom_opts.max_tokens == 1
+    assert custom_opts.seed == -42
+
+
+def test_generation_options_invalid_temperature():
+    """Verify negative, NaN, Inf, and boolean temperatures raise ValueError."""
+    with pytest.raises(ValueError, match="temperature must be a finite non-negative number"):
+        GenerationOptions(temperature=-0.1)
+
+    with pytest.raises(ValueError, match="temperature must be a finite non-negative number"):
+        GenerationOptions(temperature=float("nan"))
+
+    with pytest.raises(ValueError, match="temperature must be a finite non-negative number"):
+        GenerationOptions(temperature=float("inf"))
+
+    with pytest.raises(ValueError, match="temperature must be a finite non-negative number"):
+        GenerationOptions(temperature=True)  # type: ignore[arg-type]
+
+
+def test_generation_options_invalid_top_p():
+    """Verify top_p out of [0, 1], NaN, Inf, and booleans raise ValueError."""
+    with pytest.raises(ValueError, match="top_p must be a finite number between 0.0 and 1.0"):
+        GenerationOptions(top_p=-0.01)
+
+    with pytest.raises(ValueError, match="top_p must be a finite number between 0.0 and 1.0"):
+        GenerationOptions(top_p=1.01)
+
+    with pytest.raises(ValueError, match="top_p must be a finite number between 0.0 and 1.0"):
+        GenerationOptions(top_p=float("nan"))
+
+    with pytest.raises(ValueError, match="top_p must be a finite number between 0.0 and 1.0"):
+        GenerationOptions(top_p=False)  # type: ignore[arg-type]
+
+
+def test_generation_options_invalid_max_tokens():
+    """Verify max_tokens <= 0 and booleans raise ValueError."""
+    with pytest.raises(ValueError, match="max_tokens must be a positive integer"):
+        GenerationOptions(max_tokens=0)
+
+    with pytest.raises(ValueError, match="max_tokens must be a positive integer"):
+        GenerationOptions(max_tokens=-10)
+
+    with pytest.raises(ValueError, match="max_tokens must be a positive integer"):
+        GenerationOptions(max_tokens=True)  # type: ignore[arg-type]
+
+
+def test_generation_options_seed_validation():
+    """Verify seed accepts positive and negative signed integers, but rejects non-integers and booleans."""
+    opts_neg = GenerationOptions(seed=-999)
+    assert opts_neg.seed == -999
+
+    opts_pos = GenerationOptions(seed=123456)
+    assert opts_pos.seed == 123456
+
+    with pytest.raises(ValueError, match="seed must be an integer"):
+        GenerationOptions(seed=True)  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="seed must be an integer"):
+        GenerationOptions(seed="123")  # type: ignore[arg-type]

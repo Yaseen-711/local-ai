@@ -102,3 +102,36 @@ def test_parse_scalar_json_raises_syntax_parsing_error():
 
     with pytest.raises(SyntaxParsingError, match="must be a dict or list"):
         parse_json_payload('"just a plain string"')
+
+
+def test_parse_multiple_codeblocks_selects_valid_payload():
+    """Verify that multi-codeblock output evaluates candidates and selects valid JSON payload."""
+    raw = """Here is an example schema:
+```json
+{ "example": "not the real output" }
+```
+And here is the final structured response:
+```json
+{
+  "summary": "Actual final payload",
+  "key_points": ["Point A", "Point B"]
+}
+```
+Thank you!"""
+    parsed = parse_json_payload(raw)
+    assert isinstance(parsed, dict)
+    assert parsed["summary"] == "Actual final payload"
+    assert parsed["key_points"] == ["Point A", "Point B"]
+
+
+def test_parse_unclosed_opening_fence():
+    """Verify that truncated responses with an unclosed opening fence parse cleanly."""
+    raw = """```json
+{
+  "summary": "Truncated fence without closing backticks",
+  "key_points": ["Item 1"]
+}"""
+    parsed = parse_json_payload(raw)
+    assert isinstance(parsed, dict)
+    assert parsed["summary"] == "Truncated fence without closing backticks"
+    assert parsed["key_points"] == ["Item 1"]
