@@ -3,8 +3,10 @@
 Provides in-process execution runners that drive Plans to completion.
 """
 
+from orchestration.execution.base import PlanRunner
 from orchestration.execution.runner import InProcessPlanRunner
 
 __all__ = [
+    "PlanRunner",
     "InProcessPlanRunner",
 ]

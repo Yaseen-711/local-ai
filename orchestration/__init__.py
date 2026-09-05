@@ -27,7 +27,9 @@ from orchestration.domain.plans import Plan, PlanRevision
 from orchestration.domain.goals import Goal
 from orchestration.capabilities.base import Capability, CapabilityContext
 from orchestration.capabilities.registry import CapabilityRegistry
+from orchestration.execution.base import PlanRunner
 from orchestration.execution.runner import InProcessPlanRunner
+from orchestration.orchestrator import GoalOrchestrator
 from orchestration.errors import (
     CapabilityError,
     CapabilityNotFoundError,
@@ -61,7 +63,10 @@ __all__ = [
     "CapabilityContext",
     "CapabilityRegistry",
     # Execution
+    "PlanRunner",
     "InProcessPlanRunner",
+    # Orchestrator
+    "GoalOrchestrator",
     # Errors
     "OrchestrationError",
     "PlanValidationError",

@@ -101,3 +101,46 @@ class AppContext:
             Ready-to-use ``TextAnalysisWorkflow``.
         """
         return TextAnalysisWorkflow(inference=self.inference)
+
+    # ------------------------------------------------------------------ #
+    # Orchestration Factories                                            #
+    # ------------------------------------------------------------------ #
+
+    def create_in_process_plan_runner(self) -> InProcessPlanRunner:
+        """Create an InProcessPlanRunner pre-wired with standard capabilities.
+
+        Returns:
+            Configured InProcessPlanRunner instance.
+        """
+        from orchestration.capabilities import CapabilityRegistry
+        from orchestration.capabilities.builtin import (
+            InferencePromptCapability,
+            TextAnalysisCapability,
+        )
+        from orchestration.execution import InProcessPlanRunner
+
+        registry = CapabilityRegistry()
+        registry.register(InferencePromptCapability(connector=self.inference))
+        registry.register(
+            TextAnalysisCapability(workflow=self.create_text_analysis_workflow())
+        )
+        return InProcessPlanRunner(registry=registry)
+
+    def create_goal_orchestrator(
+        self,
+        runner: Optional[PlanRunner] = None,
+    ) -> GoalOrchestrator:
+        """Create a GoalOrchestrator wired to a PlanRunner execution boundary.
+
+        Args:
+            runner: Optional PlanRunner implementation. Defaults to a standard
+                InProcessPlanRunner wired with this context's default capabilities.
+
+        Returns:
+            Configured GoalOrchestrator instance.
+        """
+        from orchestration.orchestrator import GoalOrchestrator
+
+        if runner is None:
+            runner = self.create_in_process_plan_runner()
+        return GoalOrchestrator(runner=runner)
