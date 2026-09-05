@@ -5,11 +5,20 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import dataclass
 import os
+from pathlib import Path
 from typing import Generator, Optional
 
+from dotenv import find_dotenv, load_dotenv
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
+
+# Resolve and load .env from project root without overriding explicit environment variables
+_PROJECT_ENV_PATH = Path(__file__).resolve().parents[2] / ".env"
+if _PROJECT_ENV_PATH.is_file():
+    load_dotenv(dotenv_path=_PROJECT_ENV_PATH, override=False)
+else:
+    load_dotenv(find_dotenv(usecwd=True), override=False)
 
 
 @dataclass(frozen=True)
