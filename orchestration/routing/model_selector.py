@@ -6,6 +6,12 @@ from core.models.registry import ModelRegistry
 from orchestration.routing.types import ModelTier
 
 
+DEFAULT_TIER_MAPPING: Dict[ModelTier, str] = {
+    ModelTier.LIGHTWEIGHT: "qwen3.5-0.8b",
+    ModelTier.REASONING: "qwen3.5-9b",
+}
+
+
 class ModelSelectionPolicy:
     """Policy mapping abstract ModelTier to concrete model IDs using ModelRegistry as catalog.
 
@@ -19,7 +25,9 @@ class ModelSelectionPolicy:
         tier_mapping: Optional[Dict[ModelTier, str]] = None,
     ) -> None:
         self._registry = registry
-        self._tier_mapping: Dict[ModelTier, str] = tier_mapping or {}
+        self._tier_mapping: Dict[ModelTier, str] = (
+            DEFAULT_TIER_MAPPING.copy() if tier_mapping is None else tier_mapping
+        )
 
     def resolve_model_id(self, tier: ModelTier) -> str:
         """Resolve an abstract ModelTier to a concrete model identifier."""

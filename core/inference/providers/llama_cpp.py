@@ -129,6 +129,8 @@ class LlamaCppProvider(BaseProvider):
                 for alias in model_def.aliases:
                     if alias in server_model_ids:
                         return True
+                if "llama_cpp_alias" in model_def.metadata and model_def.metadata["llama_cpp_alias"] in server_model_ids:
+                    return True
                 return False
         except Exception:
             return False
@@ -329,6 +331,16 @@ class LlamaCppProvider(BaseProvider):
             total_tokens=total_tokens,
         )
 
+        # Validate that the response returned by llama-server actually matches the requested model
+        returned_model = resp_dict.get("model")
+        if returned_model:
+            expected_runtime_id = self._resolve_runtime_model_id(request, model_def)
+            if not (model_def.matches_identifier(str(returned_model)) or str(returned_model) == expected_runtime_id):
+                raise ProviderResponseError(
+                    f"LlamaCppProvider executed wrong model: requested '{model_def.id}' "
+                    f"(expected runtime model '{expected_runtime_id}'), "
+                    f"but llama-server reported execution of model '{returned_model}'."
+                )
 
         return InferenceResponse(
             request_id=request.request_id or resp_dict.get("id"),

@@ -472,3 +472,33 @@ def test_token_usage_corrupt_non_numeric_raises_provider_response_error(mock_url
     mock_resp.read.return_value = json.dumps(payload_negative).encode("utf-8")
     with pytest.raises(ProviderResponseError, match="Negative token usage value"):
         provider.infer(req, mock_model_def)
+
+
+def test_normalize_response_mismatched_model_raises_provider_response_error(mock_model_def):
+    """Verify that llama-server returning a different model than requested raises ProviderResponseError."""
+    provider = LlamaCppProvider()
+    req = InferenceRequest.from_prompt(model_id="qwen3.5-9b", prompt="Hello")
+    resp_dict = {
+        "id": "chatcmpl-test",
+        "model": "qwen3.5-0.8b",  # Mismatch: runtime executed 0.8b when 9b was requested
+        "choices": [{"message": {"role": "assistant", "content": "Hi"}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7},
+    }
+    with pytest.raises(ProviderResponseError, match="LlamaCppProvider executed wrong model"):
+        provider._normalize_response(resp_dict, req, mock_model_def, latency_ms=10.0)
+
+
+def test_normalize_response_matching_model_succeeds(mock_model_def):
+    """Verify that matching model in response normalizes successfully."""
+    provider = LlamaCppProvider()
+    req = InferenceRequest.from_prompt(model_id="qwen3.5-9b", prompt="Hello")
+    resp_dict = {
+        "id": "chatcmpl-test",
+        "model": "qwen3.5-9b",
+        "choices": [{"message": {"role": "assistant", "content": "Hi"}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7},
+    }
+    resp = provider._normalize_response(resp_dict, req, mock_model_def, latency_ms=10.0)
+    assert resp.model_id == "qwen3.5-9b"
+    assert resp.text == "Hi"
+

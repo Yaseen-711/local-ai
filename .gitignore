@@ -49,3 +49,4 @@ models/**/*.onnx
 
 # Project Reports
 local_ai_foundation_report.txt
+local_ai_foundation_report.md

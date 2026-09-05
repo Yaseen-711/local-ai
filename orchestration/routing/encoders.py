@@ -3,9 +3,40 @@
 import hashlib
 import math
 import re
-from typing import List
+from typing import Any, List, Optional
+from pydantic import Field
+
+try:
+    from semantic_router.encoders import DenseEncoder
+except ImportError:
+    DenseEncoder = object  # type: ignore
 
 from orchestration.routing.base import SemanticRouterEncoder
+
+
+class AurelioEncoderAdapter(DenseEncoder):
+    """Bridges Foundation SemanticRouterEncoder to Aurelio's DenseEncoder interface.
+
+    Allows any Foundation encoder (such as DeterministicHashEncoder, local dense models,
+    or test fixtures) to power Aurelio SemanticRouter in a strictly air-gapped environment.
+    """
+
+    name: str = "foundation_adapter"
+    type: str = "custom"
+    inner: Any = Field(default=None, exclude=True)
+
+    def __init__(
+        self,
+        inner: SemanticRouterEncoder,
+        score_threshold: float = 0.60,
+        **kwargs: Any,
+    ) -> None:
+        if DenseEncoder is not object:
+            super().__init__(score_threshold=score_threshold, **kwargs)
+        self.inner = inner
+
+    def __call__(self, docs: List[str]) -> List[List[float]]:
+        return self.inner.encode(docs)
 
 
 class DeterministicHashEncoder(SemanticRouterEncoder):

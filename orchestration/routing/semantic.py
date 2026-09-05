@@ -1,25 +1,28 @@
-"""Semantic Router seam and adapter (Stage 2 intent routing)."""
+"""Aurelio Semantic Router seam and adapter (Stage 2 intent routing)."""
 
+import logging
 from typing import Dict, List, Optional
+
+try:
+    from semantic_router import Route as AurelioRoute, SemanticRouter as AurelioRouter
+    from semantic_router.index.local import LocalIndex
+    HAS_AURELIO = True
+except ImportError:
+    HAS_AURELIO = False
 
 from orchestration.domain.goals import Goal
 from orchestration.routing.base import SemanticRouterEncoder
-from orchestration.routing.encoders import DeterministicHashEncoder
+from orchestration.routing.encoders import AurelioEncoderAdapter, DeterministicHashEncoder
 from orchestration.routing.types import RouteDefinition, RouteResult
 
-
-def _cosine_similarity(v1: List[float], v2: List[float]) -> float:
-    """Compute dot product of two normalized unit vectors."""
-    if len(v1) != len(v2):
-        return 0.0
-    return sum(a * b for a, b in zip(v1, v2))
+logger = logging.getLogger(__name__)
 
 
 class AurelioSemanticRouter:
     """Stage 2 semantic vector matcher operating behind a strict air-gapped seam.
 
-    Uses an injected SemanticRouterEncoder (defaulting to DeterministicHashEncoder)
-    to calculate cosine similarity between goal descriptions and defined route utterances.
+    Wraps Aurelio SemanticRouter to match goal descriptions against registered route
+    utterances in vector space using local CPU embeddings (0 MB VRAM, 100% offline).
     """
 
     def __init__(
@@ -28,50 +31,78 @@ class AurelioSemanticRouter:
         encoder: Optional[SemanticRouterEncoder] = None,
         threshold: float = 0.60,
     ) -> None:
-        self.encoder = encoder or DeterministicHashEncoder()
+        if not HAS_AURELIO:
+            raise ImportError(
+                "Aurelio Semantic Router requires 'semantic-router' to be installed. "
+                "Run: pip install semantic-router"
+            )
+
         self.threshold = threshold
         self._routes: Dict[str, RouteDefinition] = {}
-        self._route_vectors: Dict[str, List[List[float]]] = {}
+        self._aurelio_routes: List[AurelioRoute] = []
+        self.encoder = encoder or DeterministicHashEncoder()
+
+        # Wrap with AurelioEncoderAdapter if not already an Aurelio DenseEncoder
+        self._adapter = (
+            self.encoder
+            if hasattr(self.encoder, "type") and hasattr(self.encoder, "score_threshold")
+            else AurelioEncoderAdapter(inner=self.encoder, score_threshold=self.threshold)
+        )
+
+        self._router: Optional[AurelioRouter] = None
 
         if routes:
             for r in routes:
-                self.add_route(r)
+                self._routes[r.name] = r
+                utterances = r.utterances if r.utterances else [r.description or r.name]
+                self._aurelio_routes.append(
+                    AurelioRoute(name=r.name, utterances=utterances, score_threshold=self.threshold)
+                )
+            self._init_router()
+
+    def _init_router(self) -> None:
+        """Initialize the underlying Aurelio SemanticRouter with current routes."""
+        if not self._aurelio_routes:
+            self._router = None
+            return
+
+        self._router = AurelioRouter(
+            encoder=self._adapter,
+            routes=self._aurelio_routes,
+            index=LocalIndex(),
+            aggregation="max",
+            auto_sync="local",
+        )
 
     def add_route(self, route: RouteDefinition) -> None:
-        """Register a route and compute embeddings for its sample utterances."""
+        """Register a route with the router and rebuild the local index."""
         self._routes[route.name] = route
         utterances = route.utterances if route.utterances else [route.description or route.name]
-        vectors = self.encoder.encode(utterances)
-        self._route_vectors[route.name] = vectors
+        self._aurelio_routes.append(
+            AurelioRoute(name=route.name, utterances=utterances, score_threshold=self.threshold)
+        )
+        self._init_router()
 
     def match(self, goal: Goal) -> Optional[RouteResult]:
-        """Match goal text against route utterance vectors using cosine similarity."""
+        """Match goal text against route utterance vectors using Aurelio SemanticRouter."""
         text = goal.description.strip()
-        if not text or not self._route_vectors:
+        if not text or not self._routes or self._router is None:
             return None
 
-        query_vec = self.encoder.encode([text])[0]
+        # Execute semantic routing via Aurelio
+        choice = self._router(text)
 
-        best_route_name: Optional[str] = None
-        best_score: float = -1.0
-
-        for r_name, vectors in self._route_vectors.items():
-            for v in vectors:
-                sim = _cosine_similarity(query_vec, v)
-                if sim > best_score:
-                    best_score = sim
-                    best_route_name = r_name
-
-        if best_route_name is not None and best_score >= self.threshold:
-            route = self._routes[best_route_name]
+        if choice is not None and choice.name and choice.name in self._routes:
+            route = self._routes[choice.name]
+            score = float(choice.similarity_score) if choice.similarity_score is not None else 1.0
             return RouteResult(
                 route_name=route.name,
                 strategy=route.strategy,
-                confidence=round(best_score, 4),
+                confidence=round(score, 4),
                 stage_resolved="semantic_router",
                 target_capability_id=route.target_capability_id,
                 target_model_tier=route.target_model_tier,
-                metadata={"similarity_score": best_score},
+                metadata={"similarity_score": score, "engine": "aurelio_semantic_router"},
             )
 
         return None

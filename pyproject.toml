@@ -19,6 +19,7 @@ dependencies = [
     "pypdf>=5.0.0",
     "docker>=7.0.0",
     "docling>=2.120.0",
+    "semantic-router>=0.1.16",
 ]
 
 [project.optional-dependencies]
