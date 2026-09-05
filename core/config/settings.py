@@ -31,8 +31,43 @@ class DatabaseSettings:
 
 
 @dataclass(frozen=True)
+class DocumentSettings:
+    """Settings for document ingestion and understanding."""
+    default_parser: str = "docling"
+    enable_ocr: bool = True
+    ocr_engine: str = "rapidocr"
+    enable_tables: bool = True
+    enable_figures: bool = True
+    enable_formulae: bool = True
+
+
+@dataclass(frozen=True)
+class ArtifactSettings:
+    """Settings for deterministic artifact generation."""
+    output_dir: str = "artifacts"
+    enable_xlsx: bool = True
+    enable_docx: bool = True
+    enable_pdf: bool = True
+
+
+@dataclass(frozen=True)
+class WorkspaceSettings:
+    """Settings for code workspace execution and sandboxing."""
+    default_executor: str = "docker"
+    docker_image: str = "python:3.12-slim"
+    cpu_limit: float = 2.0
+    mem_limit: str = "2g"
+    network_mode: str = "none"
+    default_timeout_seconds: float = 60.0
+    base_workspaces_dir: str = ".workspaces"
+
+
+@dataclass(frozen=True)
 class Settings:
     """Global system configuration."""
     foundation: FoundationSettings = field(default_factory=FoundationSettings)
     llama_cpp: LlamaCppProviderSettings = field(default_factory=LlamaCppProviderSettings)
     database: DatabaseSettings = field(default_factory=DatabaseSettings)
+    document: DocumentSettings = field(default_factory=DocumentSettings)
+    artifact: ArtifactSettings = field(default_factory=ArtifactSettings)
+    workspace: WorkspaceSettings = field(default_factory=WorkspaceSettings)

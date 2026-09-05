@@ -43,6 +43,12 @@ class FoundationCore:
         """Active Settings."""
         return self._settings
 
+    @property
+    def repo_root(self) -> Path:
+        """Repository root path used for resolving relative paths."""
+        return self._registry.repo_root
+
+
     def infer(self, request: InferenceRequest) -> InferenceResponse:
         """Execute normalized inference.
         

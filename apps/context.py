@@ -23,7 +23,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Union
+from typing import Any, Optional, Union
+
 
 from connectors import FoundationInferenceConnector, InferenceConnector
 from core import FoundationCore
@@ -110,28 +111,149 @@ class AppContext:
         return TextAnalysisWorkflow(inference=self.inference)
 
     # ------------------------------------------------------------------ #
-    # Orchestration Factories                                            #
+    # Capability Factories                                              #
     # ------------------------------------------------------------------ #
 
-    def create_in_process_plan_runner(self) -> InProcessPlanRunner:
-        """Create an InProcessPlanRunner pre-wired with standard capabilities.
+    def create_document_understanding_capability(
+        self,
+        parser: Optional[Any] = None,
+    ) -> Any:
+        """Create a DocumentUnderstandingCapability wired to configured parser."""
+        from orchestration.capabilities.builtin.document import (
+            DocumentParseOptions,
+            DocumentUnderstandingCapability,
+        )
 
-        Returns:
-            Configured InProcessPlanRunner instance.
-        """
+        if parser is None:
+            doc_settings = getattr(getattr(self.core, "settings", None), "document", None)
+            default_parser = getattr(doc_settings, "default_parser", None) if isinstance(getattr(doc_settings, "default_parser", None), str) else "docling"
+            if default_parser == "docling":
+                try:
+                    from orchestration.capabilities.builtin.document.docling_parser import (
+                        DoclingDocumentParser,
+                    )
+                    enable_ocr = getattr(doc_settings, "enable_ocr", True)
+                    enable_tables = getattr(doc_settings, "enable_tables", True)
+                    enable_figures = getattr(doc_settings, "enable_figures", False)
+                    options = DocumentParseOptions(
+                        do_ocr=bool(enable_ocr) if isinstance(enable_ocr, bool) else True,
+                        extract_tables=bool(enable_tables) if isinstance(enable_tables, bool) else True,
+                        extract_figures=bool(enable_figures) if isinstance(enable_figures, bool) else False,
+                    )
+
+                    parser = DoclingDocumentParser(options=options)
+                except ImportError:
+                    from orchestration.capabilities.builtin.document.fallback_parser import (
+                        FallbackDocumentParser,
+                    )
+                    parser = FallbackDocumentParser()
+            else:
+                from orchestration.capabilities.builtin.document.fallback_parser import (
+                    FallbackDocumentParser,
+                )
+                parser = FallbackDocumentParser()
+
+        return DocumentUnderstandingCapability(parser=parser)
+
+    def create_artifact_generation_capability(
+        self,
+        output_dir: Optional[Union[str, Path]] = None,
+    ) -> Any:
+        """Create an ArtifactGenerationCapability wired to output storage directory."""
+        from orchestration.capabilities.builtin.artifact import (
+            ArtifactGenerationCapability,
+        )
+
+        art_settings = getattr(getattr(self.core, "settings", None), "artifact", None)
+        output_dir_str = getattr(art_settings, "output_dir", None) if isinstance(getattr(art_settings, "output_dir", None), str) else "artifacts"
+
+        repo_root = getattr(self.core, "repo_root", None)
+        if not isinstance(repo_root, Path):
+            repo_root = Path.cwd()
+
+        out_path = Path(output_dir or output_dir_str)
+        if not out_path.is_absolute():
+            out_path = repo_root / out_path
+
+        return ArtifactGenerationCapability(output_dir=out_path)
+
+    def create_workspace_coding_capability(
+        self,
+        executor: Optional[Any] = None,
+        workspace_dir: Optional[Union[str, Path]] = None,
+        default_executor_type: Optional[str] = None,
+    ) -> Any:
+        """Create a WorkspaceCodingCapability wired to isolated workspace sandboxing."""
+        from orchestration.capabilities.builtin.code import (
+            WorkspaceCodingCapability,
+        )
+
+        ws_settings = getattr(getattr(self.core, "settings", None), "workspace", None)
+        exec_type = default_executor_type or (
+            getattr(ws_settings, "default_executor", None)
+            if isinstance(getattr(ws_settings, "default_executor", None), str)
+            else "docker"
+        )
+        base_dir = (
+            getattr(ws_settings, "base_workspaces_dir", None)
+            if isinstance(getattr(ws_settings, "base_workspaces_dir", None), str)
+            else ".workspaces"
+        )
+
+        repo_root = getattr(self.core, "repo_root", None)
+        if not isinstance(repo_root, Path):
+            repo_root = Path.cwd()
+
+        ws_path = Path(workspace_dir or base_dir)
+        if not ws_path.is_absolute():
+            ws_path = repo_root / ws_path
+
+        return WorkspaceCodingCapability(
+            executor=executor,
+            workspace_dir=ws_path,
+            default_executor_type=exec_type,
+        )
+
+
+    def create_capability_registry(self) -> Any:
+        """Create a standard CapabilityRegistry with all built-in capabilities registered."""
         from orchestration.capabilities import CapabilityRegistry
         from orchestration.capabilities.builtin import (
             InferencePromptCapability,
             TextAnalysisCapability,
         )
-        from orchestration.execution import InProcessPlanRunner
 
         registry = CapabilityRegistry()
         registry.register(InferencePromptCapability(connector=self.inference))
         registry.register(
             TextAnalysisCapability(workflow=self.create_text_analysis_workflow())
         )
-        return InProcessPlanRunner(registry=registry)
+        registry.register(self.create_document_understanding_capability())
+        registry.register(self.create_artifact_generation_capability())
+        registry.register(self.create_workspace_coding_capability())
+        return registry
+
+    # ------------------------------------------------------------------ #
+    # Orchestration Factories                                            #
+    # ------------------------------------------------------------------ #
+
+    def create_in_process_plan_runner(
+        self,
+        registry: Optional[Any] = None,
+    ) -> InProcessPlanRunner:
+        """Create an InProcessPlanRunner pre-wired with standard capabilities.
+
+        Args:
+            registry: Optional CapabilityRegistry override. Defaults to full standard registry.
+
+        Returns:
+            Configured InProcessPlanRunner instance.
+        """
+        from orchestration.execution import InProcessPlanRunner
+
+        reg = registry or self.create_capability_registry()
+        return InProcessPlanRunner(registry=reg)
+
 
     def create_orchestration_repository(
         self,
@@ -229,6 +351,38 @@ class AppContext:
                     utterances=["analyze text", "extract key points from document"],
                 ),
                 RouteDefinition(
+                    name="document_understanding",
+                    strategy=ExecutionStrategy.DIRECT_CAPABILITY,
+                    target_capability_id="document.understand",
+                    utterances=[
+                        "parse document",
+                        "extract tables from pdf",
+                        "read scanned document",
+                        "understand document",
+                    ],
+                ),
+                RouteDefinition(
+                    name="artifact_generation",
+                    strategy=ExecutionStrategy.DIRECT_CAPABILITY,
+                    target_capability_id="artifact.generate",
+                    utterances=[
+                        "generate spreadsheet",
+                        "create excel file",
+                        "generate pdf report",
+                        "create docx document",
+                    ],
+                ),
+                RouteDefinition(
+                    name="code_workspace",
+                    strategy=ExecutionStrategy.DIRECT_CAPABILITY,
+                    target_capability_id="code.workspace",
+                    utterances=[
+                        "run code in sandbox",
+                        "execute command in workspace",
+                        "inspect workspace files",
+                    ],
+                ),
+                RouteDefinition(
                     name="complex_workflow",
                     strategy=ExecutionStrategy.PLAN_REQUIRED,
                     utterances=["create report and summarize", "multi-step pipeline"],
@@ -255,32 +409,23 @@ class AppContext:
         """Create a deterministic 4-stage PlanValidator.
 
         Args:
-            registry: Optional CapabilityRegistry. Defaults to runner registry.
+            registry: Optional CapabilityRegistry. Defaults to standard capability registry.
             max_tasks: Maximum task count limit.
             max_depth: Maximum DAG critical path depth.
 
         Returns:
             Configured PlanValidator instance.
         """
-        from orchestration.capabilities import CapabilityRegistry
-        from orchestration.capabilities.builtin import (
-            InferencePromptCapability,
-            TextAnalysisCapability,
-        )
         from orchestration.validation import PlanValidator
 
-        if registry is None:
-            registry = CapabilityRegistry()
-            registry.register(InferencePromptCapability(connector=self.inference))
-            registry.register(
-                TextAnalysisCapability(workflow=self.create_text_analysis_workflow())
-            )
+        reg = registry or self.create_capability_registry()
 
         return PlanValidator(
-            capability_registry=registry,
+            capability_registry=reg,
             max_tasks=max_tasks,
             max_depth=max_depth,
         )
+
 
     def create_decision_engine(
         self,
