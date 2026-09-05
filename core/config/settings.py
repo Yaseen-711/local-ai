@@ -22,7 +22,17 @@ class LlamaCppProviderSettings:
 
 
 @dataclass(frozen=True)
+class DatabaseSettings:
+    """Settings for relational orchestration persistence."""
+    url: str = "postgresql+psycopg://postgres:postgres@localhost:5432/local_ai"
+    pool_size: int = 5
+    max_overflow: int = 10
+    echo: bool = False
+
+
+@dataclass(frozen=True)
 class Settings:
     """Global system configuration."""
     foundation: FoundationSettings = field(default_factory=FoundationSettings)
     llama_cpp: LlamaCppProviderSettings = field(default_factory=LlamaCppProviderSettings)
+    database: DatabaseSettings = field(default_factory=DatabaseSettings)

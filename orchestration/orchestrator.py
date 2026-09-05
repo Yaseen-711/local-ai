@@ -5,16 +5,33 @@ Decoupled from execution engines, planning algorithms, capability registries, an
 """
 
 import asyncio
-from typing import Dict, Optional
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, Optional
 
+from orchestration.capabilities.base import CapabilityContext
+from orchestration.capabilities.registry import CapabilityRegistry
 from orchestration.domain.goals import Goal
 from orchestration.domain.plans import Plan
-from orchestration.domain.types import GoalStatus, PlanStatus, TaskStatus
+from orchestration.domain.results import TaskError, TaskResult
+from orchestration.domain.types import GoalStatus, PlanStatus, TaskErrorCategory, TaskStatus
 from orchestration.execution.base import (
     ExecutionHandle,
     PlanExecutionResult,
     PlanRunner,
 )
+from orchestration.persistence.base import OrchestrationRepository
+
+
+@dataclass(frozen=True)
+class DirectGoalResult:
+    """Outcome of a direct-goal execution returned by GoalOrchestrator.
+
+    Preserves Goal context purity by keeping execution outcomes and errors
+    outside Goal.context.
+    """
+    goal: Goal
+    result: Optional[TaskResult] = None
+    error: Optional[TaskError] = None
 
 
 class GoalOrchestrator:
@@ -27,21 +44,157 @@ class GoalOrchestrator:
     - Applies execution facts to Plan and Tasks, preserving domain invariants.
     - Synchronizes Goal status with Plan outcome (COMPLETED, FAILED, CANCELLED).
     - Cancels Goal, active executions via PlanRunner, and associated Plan/Tasks on demand.
+    - Snapshot-persists domain aggregates at milestone boundaries if repository provided.
     """
 
-    def __init__(self, runner: PlanRunner) -> None:
-        """Initialize orchestrator with an execution boundary runner.
+    def __init__(
+        self,
+        runner: PlanRunner,
+        repository: Optional[OrchestrationRepository] = None,
+        registry: Optional[CapabilityRegistry] = None,
+    ) -> None:
+        """Initialize orchestrator with an execution boundary runner and optional repository.
 
         Args:
             runner: Object satisfying the PlanRunner execution boundary protocol.
+            repository: Optional repository for persisting Goal and Plan aggregates.
+            registry: Optional CapabilityRegistry for direct execution capability resolution.
         """
         self._runner = runner
+        self._repository = repository
+        self._registry = registry or getattr(runner, "registry", getattr(runner, "_registry", None))
         self._active_handles: Dict[str, ExecutionHandle] = {}
 
     @property
     def runner(self) -> PlanRunner:
         """Underlying execution boundary runner."""
         return self._runner
+
+    @property
+    def repository(self) -> Optional[OrchestrationRepository]:
+        """Underlying orchestration persistence repository."""
+        return self._repository
+
+    @property
+    def registry(self) -> Optional[CapabilityRegistry]:
+        """Underlying capability registry."""
+        return self._registry
+
+    def execute_direct_goal(
+        self,
+        goal: Goal,
+        capability_id: str,
+        parameters: Optional[Dict[str, Any]] = None,
+        inputs: Optional[Dict[str, Any]] = None,
+    ) -> DirectGoalResult:
+        """Directly execute a single capability for a Goal without DAG overhead.
+
+        Preserves Goal lifecycle ownership and milestone persistence.
+        Does NOT store execution results inside Goal.context.
+
+        Args:
+            goal: The Goal to execute (must be PENDING).
+            capability_id: Canonical identifier of the capability to invoke.
+            parameters: Declarative task parameters.
+            inputs: Input payload data.
+
+        Returns:
+            DirectGoalResult containing the updated Goal and TaskResult or TaskError.
+        """
+        if goal.status != GoalStatus.PENDING:
+            raise ValueError(
+                f"Cannot execute goal '{goal.goal_id}': status is '{goal.status.value}', expected 'pending'."
+            )
+
+        goal.activate(f"direct:{capability_id}")
+        self._persist_milestone(goal)
+
+        if self._registry is None or not self._registry.has(capability_id):
+            task_err = TaskError(
+                category=TaskErrorCategory.CAPABILITY,
+                message=f"Capability '{capability_id}' not found in registry.",
+            )
+            goal.mark_failed()
+            self._persist_milestone(goal)
+            return DirectGoalResult(goal=goal, error=task_err)
+
+        capability = self._registry.get(capability_id)
+        params = parameters or {}
+        in_data = inputs or {}
+
+        ctx = CapabilityContext(
+            execution_id=f"dir-{goal.goal_id}",
+            metadata={"goal_id": goal.goal_id, "capability_id": capability_id},
+        )
+
+        try:
+            res = capability.execute(parameters=params, inputs=in_data, context=ctx)
+            goal.mark_completed()
+            self._persist_milestone(goal)
+            return DirectGoalResult(goal=goal, result=res)
+        except Exception as exc:
+            task_err = TaskError.from_exception(exc)
+            goal.mark_failed()
+            self._persist_milestone(goal)
+            return DirectGoalResult(goal=goal, error=task_err)
+
+    async def execute_direct_goal_async(
+        self,
+        goal: Goal,
+        capability_id: str,
+        parameters: Optional[Dict[str, Any]] = None,
+        inputs: Optional[Dict[str, Any]] = None,
+    ) -> DirectGoalResult:
+        """Asynchronously execute a single capability for a Goal."""
+        return await asyncio.to_thread(
+            self.execute_direct_goal, goal, capability_id, parameters, inputs
+        )
+
+    def execute_deterministic_goal(
+        self,
+        goal: Goal,
+        handler: Callable[[], TaskResult],
+    ) -> DirectGoalResult:
+        """Directly execute a deterministic function for a Goal without capability or plan overhead.
+
+        Preserves Goal lifecycle ownership and milestone persistence.
+        Does NOT store execution results inside Goal.context.
+
+        Args:
+            goal: The Goal to execute (must be PENDING).
+            handler: Callable returning a TaskResult.
+
+        Returns:
+            DirectGoalResult containing the updated Goal and TaskResult or TaskError.
+        """
+        if goal.status != GoalStatus.PENDING:
+            raise ValueError(
+                f"Cannot execute goal '{goal.goal_id}': status is '{goal.status.value}', expected 'pending'."
+            )
+
+        goal.activate("direct:deterministic")
+        self._persist_milestone(goal)
+
+        try:
+            res = handler()
+            if not isinstance(res, TaskResult):
+                res = TaskResult(output=res if isinstance(res, dict) else {"result": res})
+            goal.mark_completed()
+            self._persist_milestone(goal)
+            return DirectGoalResult(goal=goal, result=res)
+        except Exception as exc:
+            task_err = TaskError.from_exception(exc)
+            goal.mark_failed()
+            self._persist_milestone(goal)
+            return DirectGoalResult(goal=goal, error=task_err)
+
+    async def execute_deterministic_goal_async(
+        self,
+        goal: Goal,
+        handler: Callable[[], TaskResult],
+    ) -> DirectGoalResult:
+        """Asynchronously execute a deterministic function for a Goal."""
+        return await asyncio.to_thread(self.execute_deterministic_goal, goal, handler)
 
     def execute_goal(self, goal: Goal, plan: Plan) -> Goal:
         """Bind a Plan to a Goal, execute the plan, and synchronize Goal status.
@@ -62,6 +215,7 @@ class GoalOrchestrator:
 
         # Bind goal to plan
         goal.activate(plan.plan_id)
+        self._persist_milestone(goal, plan)
 
         # Delegate execution to runner within safety boundary
         try:
@@ -81,9 +235,11 @@ class GoalOrchestrator:
             # Prevent goal from remaining stranded in ACTIVE on unhandled runner failures
             if goal.status == GoalStatus.ACTIVE:
                 goal.mark_failed()
+            self._persist_milestone(goal, plan)
             raise
 
         self._sync_goal_with_plan(goal, plan)
+        self._persist_milestone(goal, plan)
         return goal
 
     async def execute_goal_async(self, goal: Goal, plan: Plan) -> Goal:
@@ -108,6 +264,7 @@ class GoalOrchestrator:
 
         # Bind goal to plan
         goal.activate(plan.plan_id)
+        await self._persist_milestone_async(goal, plan)
 
         try:
             if hasattr(self._runner, "start_async") and hasattr(self._runner, "wait_async"):
@@ -135,9 +292,11 @@ class GoalOrchestrator:
         except Exception:
             if goal.status == GoalStatus.ACTIVE:
                 goal.mark_failed()
+            await self._persist_milestone_async(goal, plan)
             raise
 
         self._sync_goal_with_plan(goal, plan)
+        await self._persist_milestone_async(goal, plan)
         return goal
 
     def cancel_goal(self, goal: Goal, plan: Optional[Plan] = None) -> None:
@@ -179,6 +338,8 @@ class GoalOrchestrator:
         if goal.status != GoalStatus.CANCELLED:
             goal.cancel()
 
+        self._persist_milestone(goal, plan)
+
     async def cancel_goal_async(self, goal: Goal, plan: Optional[Plan] = None) -> None:
         """Asynchronously cancel a Goal, propagating cancellation to the runner.
 
@@ -219,6 +380,23 @@ class GoalOrchestrator:
 
         if goal.status != GoalStatus.CANCELLED:
             goal.cancel()
+
+        await self._persist_milestone_async(goal, plan)
+
+    def _persist_milestone(self, goal: Goal, plan: Optional[Plan] = None) -> None:
+        """Atomically persist Goal and Plan aggregates at a milestone boundary."""
+        if self._repository is not None:
+            with self._repository.transaction():
+                self._repository.goals.save(goal)
+                if plan is not None:
+                    self._repository.plans.save(plan)
+
+    async def _persist_milestone_async(
+        self, goal: Goal, plan: Optional[Plan] = None
+    ) -> None:
+        """Asynchronously persist Goal and Plan aggregates via thread delegation."""
+        if self._repository is not None:
+            await asyncio.to_thread(self._persist_milestone, goal, plan)
 
     def _validate_goal_and_plan(self, goal: Goal, plan: Plan) -> None:
         """Validate Goal and Plan eligibility for execution."""

@@ -17,7 +17,7 @@ Lifecycle transitions:
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, Iterator, List, Mapping, MutableMapping, MutableSequence, Optional
 
 from orchestration.domain.types import AttemptStatus, TaskStatus
 from orchestration.domain.dependencies import Dependency
@@ -34,6 +34,135 @@ _TERMINAL_STATES = frozenset({
     TaskStatus.SKIPPED,
     TaskStatus.CANCELLED,
 })
+
+_SPECIFICATION_FIELDS = frozenset({
+    "task_id",
+    "plan_id",
+    "title",
+    "capability_id",
+    "description",
+    "parameters",
+    "input_references",
+    "dependencies",
+    "created_at",
+})
+
+# ---------------------------------------------------------------------------
+# Immutable collection proxies for Task specification fields
+# ---------------------------------------------------------------------------
+
+_MUTATION_MSG = (
+    "Cannot mutate Task specification collection '{field}' on Task '{task_id}'. "
+    "Task specification is immutable after construction; create a new Task for plan changes."
+)
+
+
+class _ImmutableDict(dict):
+    """A dict subclass that raises ValueError on any mutating operation.
+
+    Used to back Task.parameters and Task.input_references so that in-place
+    mutation (e.g. task.parameters['key'] = value) is caught at the boundary
+    rather than silently corrupting the declarative specification.
+    """
+
+    def __init__(self, data: Mapping, *, _field: str = "parameters", _task_id: str = "?") -> None:
+        super().__init__(data)
+        # Store field/task_id without triggering our own __setitem__
+        object.__setattr__(self, "_field", _field)
+        object.__setattr__(self, "_task_id", _task_id)
+
+    def _deny(self) -> None:
+        raise ValueError(
+            _MUTATION_MSG.format(
+                field=object.__getattribute__(self, "_field"),
+                task_id=object.__getattribute__(self, "_task_id"),
+            )
+        )
+
+    def __setitem__(self, key: Any, value: Any) -> None:
+        self._deny()
+
+    def __delitem__(self, key: Any) -> None:
+        self._deny()
+
+    def pop(self, *args: Any) -> Any:  # type: ignore[override]
+        self._deny()
+
+    def popitem(self) -> Any:
+        self._deny()
+
+    def clear(self) -> None:
+        self._deny()
+
+    def update(self, *args: Any, **kwargs: Any) -> None:  # type: ignore[override]
+        self._deny()
+
+    def setdefault(self, key: Any, default: Any = None) -> Any:
+        self._deny()
+
+    def __ior__(self, other: Any) -> "_ImmutableDict":  # type: ignore[override]
+        self._deny()
+        return self  # unreachable, satisfies type checker
+
+
+class _ImmutableList(list):
+    """A list subclass that raises ValueError on any mutating operation.
+
+    Used to back Task.dependencies so that in-place mutation
+    (e.g. task.dependencies.append(...)) is caught at the boundary.
+    """
+
+    def __init__(self, data: Iterable, *, _field: str = "dependencies", _task_id: str = "?") -> None:
+        super().__init__(data)
+        object.__setattr__(self, "_field", _field)
+        object.__setattr__(self, "_task_id", _task_id)
+
+    def _deny(self) -> None:
+        raise ValueError(
+            _MUTATION_MSG.format(
+                field=object.__getattribute__(self, "_field"),
+                task_id=object.__getattribute__(self, "_task_id"),
+            )
+        )
+
+    def append(self, item: Any) -> None:
+        self._deny()
+
+    def insert(self, index: int, item: Any) -> None:
+        self._deny()
+
+    def remove(self, item: Any) -> None:
+        self._deny()
+
+    def pop(self, *args: Any) -> Any:  # type: ignore[override]
+        self._deny()
+
+    def clear(self) -> None:
+        self._deny()
+
+    def extend(self, iterable: Any) -> None:
+        self._deny()
+
+    def reverse(self) -> None:
+        self._deny()
+
+    def sort(self, *args: Any, **kwargs: Any) -> None:  # type: ignore[override]
+        self._deny()
+
+    def __setitem__(self, index: Any, value: Any) -> None:
+        self._deny()
+
+    def __delitem__(self, index: Any) -> None:
+        self._deny()
+
+    def __iadd__(self, other: Any) -> "_ImmutableList":  # type: ignore[override]
+        self._deny()
+        return self  # unreachable
+
+    def __imul__(self, n: int) -> "_ImmutableList":  # type: ignore[override]
+        self._deny()
+        return self  # unreachable
+
 
 
 @dataclass
@@ -76,6 +205,34 @@ class Task:
     attempts: List[Attempt] = field(default_factory=list)
     result: Optional[TaskResult] = None
     error: Optional[TaskError] = None
+
+    def __post_init__(self) -> None:
+        """Defensively copy collections into immutable proxies and lock declarative specification.
+
+        After construction, Task.parameters, Task.input_references, and Task.dependencies
+        are backed by _ImmutableDict / _ImmutableList proxies that raise ValueError on any
+        in-place mutation, enforcing true declarative immutability for nested collections.
+        """
+        # Use object.__setattr__ to bypass our own __setattr__ guard during init.
+        object.__setattr__(self, "parameters", _ImmutableDict(
+            self.parameters, _field="parameters", _task_id=self.task_id
+        ))
+        object.__setattr__(self, "input_references", _ImmutableDict(
+            self.input_references, _field="input_references", _task_id=self.task_id
+        ))
+        object.__setattr__(self, "dependencies", _ImmutableList(
+            self.dependencies, _field="dependencies", _task_id=self.task_id
+        ))
+        object.__setattr__(self, "_frozen_specification", True)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        """Enforce immutability on declarative specification attributes after creation."""
+        if getattr(self, "_frozen_specification", False) and name in _SPECIFICATION_FIELDS:
+            raise ValueError(
+                f"Cannot mutate declarative specification field '{name}' on Task '{self.task_id}'. "
+                "Task specification is immutable after construction; create a new Task for plan changes."
+            )
+        super().__setattr__(name, value)
 
     def start_attempt(self, attempt_id: str) -> Attempt:
         """Create and record a new execution attempt.

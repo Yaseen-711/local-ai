@@ -6,7 +6,12 @@ from typing import Dict, List, Optional, Union
 
 from core.common.errors import ConfigurationError
 from core.common.types import ModelFormat, ModelRole
-from core.config.settings import FoundationSettings, LlamaCppProviderSettings, Settings
+from core.config.settings import (
+    DatabaseSettings,
+    FoundationSettings,
+    LlamaCppProviderSettings,
+    Settings,
+)
 from core.models.schema import ModelCapabilities, ModelDefinition
 
 
@@ -174,4 +179,16 @@ def load_settings(settings_path: Union[str, Path]) -> Settings:
         default_alias=str(llama_data.get("default_alias", "qwen3.5-9b")),
     )
 
-    return Settings(foundation=foundation_settings, llama_cpp=llama_settings)
+    db_data = data.get("database", {})
+    database_settings = DatabaseSettings(
+        url=str(db_data.get("url", "postgresql+psycopg://postgres:postgres@localhost:5432/local_ai")),
+        pool_size=int(db_data.get("pool_size", 5)),
+        max_overflow=int(db_data.get("max_overflow", 10)),
+        echo=bool(db_data.get("echo", False)),
+    )
+
+    return Settings(
+        foundation=foundation_settings,
+        llama_cpp=llama_settings,
+        database=database_settings,
+    )

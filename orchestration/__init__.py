@@ -34,7 +34,17 @@ from orchestration.execution.base import (
     PlanRunner,
 )
 from orchestration.execution.runner import InProcessPlanRunner
-from orchestration.orchestrator import GoalOrchestrator
+from orchestration.orchestrator import DirectGoalResult, GoalOrchestrator
+from orchestration.persistence.base import (
+    GoalRepository,
+    OrchestrationRepository,
+    PlanRepository,
+)
+from orchestration.persistence.repository import (
+    PostgresGoalRepository,
+    PostgresOrchestrationRepository,
+    PostgresPlanRepository,
+)
 from orchestration.errors import (
     CapabilityError,
     CapabilityNotFoundError,
@@ -74,7 +84,15 @@ __all__ = [
     "PlanRunner",
     "InProcessPlanRunner",
     # Orchestrator
+    "DirectGoalResult",
     "GoalOrchestrator",
+    # Persistence
+    "GoalRepository",
+    "PlanRepository",
+    "OrchestrationRepository",
+    "PostgresGoalRepository",
+    "PostgresPlanRepository",
+    "PostgresOrchestrationRepository",
     # Errors
     "OrchestrationError",
     "PlanValidationError",

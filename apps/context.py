@@ -27,7 +27,13 @@ from typing import Optional, Union
 
 from connectors import FoundationInferenceConnector, InferenceConnector
 from core import FoundationCore
-from orchestration import GoalOrchestrator, InProcessPlanRunner, PlanRunner
+from orchestration import (
+    GoalOrchestrator,
+    InProcessPlanRunner,
+    OrchestrationRepository,
+    PlanRunner,
+    PostgresOrchestrationRepository,
+)
 from workflows import TextAnalysisWorkflow
 
 
@@ -127,15 +133,45 @@ class AppContext:
         )
         return InProcessPlanRunner(registry=registry)
 
+    def create_orchestration_repository(
+        self,
+        db_url: Optional[str] = None,
+    ) -> PostgresOrchestrationRepository:
+        """Create a PostgresOrchestrationRepository wired to the configured database.
+
+        Args:
+            db_url: Optional database URL override. Defaults to self.core.settings.database.url.
+
+        Returns:
+            Configured PostgresOrchestrationRepository instance.
+        """
+        from orchestration.persistence import (
+            PostgresOrchestrationRepository,
+            create_db_engine,
+            create_session_factory,
+        )
+
+        url = db_url or self.core.settings.database.url
+        engine = create_db_engine(
+            url=url,
+            pool_size=self.core.settings.database.pool_size,
+            max_overflow=self.core.settings.database.max_overflow,
+            echo=self.core.settings.database.echo,
+        )
+        factory = create_session_factory(engine)
+        return PostgresOrchestrationRepository(session_or_factory=factory)
+
     def create_goal_orchestrator(
         self,
         runner: Optional[PlanRunner] = None,
+        repository: Optional[OrchestrationRepository] = None,
     ) -> GoalOrchestrator:
-        """Create a GoalOrchestrator wired to a PlanRunner execution boundary.
+        """Create a GoalOrchestrator wired to a PlanRunner execution boundary and optional repository.
 
         Args:
             runner: Optional PlanRunner implementation. Defaults to a standard
                 InProcessPlanRunner wired with this context's default capabilities.
+            repository: Optional OrchestrationRepository implementation.
 
         Returns:
             Configured GoalOrchestrator instance.
@@ -144,4 +180,147 @@ class AppContext:
 
         if runner is None:
             runner = self.create_in_process_plan_runner()
-        return GoalOrchestrator(runner=runner)
+        return GoalOrchestrator(runner=runner, repository=repository)
+
+    # ------------------------------------------------------------------ #
+    # Decision & Planning Layer Factories                                 #
+    # ------------------------------------------------------------------ #
+
+    def create_intent_router(
+        self,
+        routes: Optional[list] = None,
+        enable_llm: bool = False,
+        policy: Optional["ModelSelectionPolicy"] = None,
+    ) -> "StagedEscalationRouter":
+        """Create a StagedEscalationRouter configured with default system routes.
+
+        Args:
+            routes: Optional list of RouteDefinitions. If omitted, standard
+                system routes are configured.
+            enable_llm: If True, attach an LLMIntentClassifier backed by
+                ModelSelectionPolicy for Stage 3 & 4 escalation.
+            policy: Optional ModelSelectionPolicy instance. Defaults to one
+                created using this context's core.model_registry.
+
+        Returns:
+            Configured StagedEscalationRouter instance.
+        """
+        from orchestration.routing import (
+            AurelioSemanticRouter,
+            DeterministicRuleMatcher,
+            ExecutionStrategy,
+            LLMIntentClassifier,
+            ModelSelectionPolicy,
+            RouteDefinition,
+            StagedEscalationRouter,
+        )
+
+        if routes is None:
+            routes = [
+                RouteDefinition(
+                    name="system_ping",
+                    strategy=ExecutionStrategy.DIRECT_DETERMINISTIC,
+                    metadata={"prefixes": ["ping", "health"]},
+                ),
+                RouteDefinition(
+                    name="text_analysis",
+                    strategy=ExecutionStrategy.DIRECT_CAPABILITY,
+                    target_capability_id="workflow.text_analysis",
+                    utterances=["analyze text", "extract key points from document"],
+                ),
+                RouteDefinition(
+                    name="complex_workflow",
+                    strategy=ExecutionStrategy.PLAN_REQUIRED,
+                    utterances=["create report and summarize", "multi-step pipeline"],
+                ),
+            ]
+
+        llm_classifier = None
+        if enable_llm:
+            model_policy = policy or ModelSelectionPolicy(registry=self.core.model_registry)
+            llm_classifier = LLMIntentClassifier(
+                connector=self.inference,
+                routes=routes,
+                model_selection_policy=model_policy,
+            )
+
+        return StagedEscalationRouter(routes=routes, llm_classifier=llm_classifier)
+
+    def create_plan_validator(
+        self,
+        registry: Optional["CapabilityRegistry"] = None,
+        max_tasks: int = 50,
+        max_depth: int = 10,
+    ) -> "PlanValidator":
+        """Create a deterministic 4-stage PlanValidator.
+
+        Args:
+            registry: Optional CapabilityRegistry. Defaults to runner registry.
+            max_tasks: Maximum task count limit.
+            max_depth: Maximum DAG critical path depth.
+
+        Returns:
+            Configured PlanValidator instance.
+        """
+        from orchestration.capabilities import CapabilityRegistry
+        from orchestration.capabilities.builtin import (
+            InferencePromptCapability,
+            TextAnalysisCapability,
+        )
+        from orchestration.validation import PlanValidator
+
+        if registry is None:
+            registry = CapabilityRegistry()
+            registry.register(InferencePromptCapability(connector=self.inference))
+            registry.register(
+                TextAnalysisCapability(workflow=self.create_text_analysis_workflow())
+            )
+
+        return PlanValidator(
+            capability_registry=registry,
+            max_tasks=max_tasks,
+            max_depth=max_depth,
+        )
+
+    def create_decision_engine(
+        self,
+        orchestrator: Optional[GoalOrchestrator] = None,
+        router: Optional["IntentRouter"] = None,
+        planner: Optional["Planner"] = None,
+        validator: Optional["PlanValidator"] = None,
+    ) -> "DecisionEngine":
+        """Create a DecisionEngine composing routing, planning, validation, and orchestration.
+
+        Args:
+            orchestrator: Optional GoalOrchestrator instance.
+            router: Optional IntentRouter instance.
+            planner: Optional Planner instance.
+            validator: Optional PlanValidator instance.
+
+        Returns:
+            Configured DecisionEngine instance.
+        """
+        from orchestration.decision import DecisionEngine
+        from orchestration.planning import LLMPlanner
+
+        if orchestrator is None:
+            orchestrator = self.create_goal_orchestrator()
+
+        if router is None:
+            router = self.create_intent_router()
+
+        if validator is None:
+            validator = self.create_plan_validator(registry=orchestrator.registry)
+
+        if planner is None:
+            planner = LLMPlanner(
+                connector=self.inference,
+                capability_registry=validator.registry,
+            )
+
+        return DecisionEngine(
+            router=router,
+            orchestrator=orchestrator,
+            planner=planner,
+            validator=validator,
+        )

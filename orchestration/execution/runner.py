@@ -48,6 +48,11 @@ class InProcessPlanRunner:
         self._registry = registry
         self._executions: Dict[str, Plan] = {}
 
+    @property
+    def registry(self) -> CapabilityRegistry:
+        """Underlying CapabilityRegistry."""
+        return self._registry
+
     def start(self, plan: Plan) -> ExecutionHandle:
         """Initiate plan execution in-process.
 
