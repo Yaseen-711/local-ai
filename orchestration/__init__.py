@@ -25,6 +25,17 @@ from orchestration.domain.attempts import Attempt
 from orchestration.domain.tasks import Task
 from orchestration.domain.plans import Plan, PlanRevision
 from orchestration.domain.goals import Goal
+from orchestration.capabilities.base import Capability, CapabilityContext
+from orchestration.capabilities.registry import CapabilityRegistry
+from orchestration.execution.runner import InProcessPlanRunner
+from orchestration.errors import (
+    CapabilityError,
+    CapabilityNotFoundError,
+    CapabilityRegistryError,
+    OrchestrationError,
+    PlanValidationError,
+    TaskLifecycleError,
+)
 
 __all__ = [
     # Enums
@@ -45,4 +56,17 @@ __all__ = [
     "Plan",
     "PlanRevision",
     "Goal",
+    # Capabilities
+    "Capability",
+    "CapabilityContext",
+    "CapabilityRegistry",
+    # Execution
+    "InProcessPlanRunner",
+    # Errors
+    "OrchestrationError",
+    "PlanValidationError",
+    "TaskLifecycleError",
+    "CapabilityError",
+    "CapabilityNotFoundError",
+    "CapabilityRegistryError",
 ]

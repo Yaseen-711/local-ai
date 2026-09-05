@@ -20,3 +20,18 @@ class PlanValidationError(OrchestrationError):
 class TaskLifecycleError(OrchestrationError):
     """Raised when an invalid task lifecycle transition is attempted."""
     pass
+
+
+class CapabilityError(OrchestrationError):
+    """Base exception for capability-related errors."""
+    pass
+
+
+class CapabilityNotFoundError(CapabilityError):
+    """Raised when a requested capability_id is not found in the registry."""
+    pass
+
+
+class CapabilityRegistryError(CapabilityError):
+    """Raised when a capability cannot be registered (e.g. duplicate ID)."""
+    pass
