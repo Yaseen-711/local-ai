@@ -1,5 +1,6 @@
 """Unit and integration tests for GoalOrchestrator."""
 
+import asyncio
 from typing import Any, Dict, Optional
 import pytest
 
@@ -12,9 +13,15 @@ from orchestration.domain.references import DataReference
 from orchestration.domain.results import TaskResult
 from orchestration.domain.tasks import Task
 from orchestration.domain.types import GoalStatus, PlanStatus, TaskStatus
-from orchestration.execution.base import PlanRunner
+from orchestration.execution.base import (
+    ExecutionHandle,
+    PlanExecutionResult,
+    PlanExecutionSnapshot,
+    PlanRunner,
+)
 from orchestration.execution.runner import InProcessPlanRunner
 from orchestration.orchestrator import GoalOrchestrator
+
 
 
 class EchoCapability:
@@ -47,8 +54,17 @@ class MockPlanRunner:
         self.target_status = target_status
         self.last_plan: Optional[Plan] = None
 
-    def run(self, plan: Plan) -> Plan:
+    def start(self, plan: Plan) -> ExecutionHandle:
         self.last_plan = plan
+        return ExecutionHandle(execution_id=f"mock-{plan.plan_id}", plan_id=plan.plan_id)
+
+    def wait(
+        self,
+        handle: ExecutionHandle,
+        timeout: Optional[float] = None,
+    ) -> PlanExecutionResult:
+        assert self.last_plan is not None
+        plan = self.last_plan
         if self.target_status == PlanStatus.COMPLETED:
             if plan.status == PlanStatus.DRAFT:
                 plan.activate()
@@ -59,7 +75,31 @@ class MockPlanRunner:
             plan.mark_failed()
         elif self.target_status == PlanStatus.CANCELLED:
             plan.cancel()
+        return PlanExecutionResult(
+            execution_id=handle.execution_id,
+            plan_id=plan.plan_id,
+            status=plan.status,
+        )
+
+    def get_status(self, handle: ExecutionHandle) -> PlanExecutionSnapshot:
+        status = self.last_plan.status if self.last_plan else PlanStatus.DRAFT
+        return PlanExecutionSnapshot(
+            execution_id=handle.execution_id,
+            plan_id=handle.plan_id,
+            status=status,
+            task_statuses={},
+            is_terminal=status in (PlanStatus.COMPLETED, PlanStatus.FAILED, PlanStatus.CANCELLED),
+        )
+
+    def cancel(self, handle: ExecutionHandle) -> None:
+        if self.last_plan and self.last_plan.status != PlanStatus.CANCELLED:
+            self.last_plan.cancel()
+
+    def run(self, plan: Plan) -> Plan:
+        handle = self.start(plan)
+        self.wait(handle)
         return plan
+
 
 
 def _create_runner() -> InProcessPlanRunner:
@@ -149,7 +189,7 @@ def test_execute_goal_with_multi_step_data_flow():
         title="Step 2",
         capability_id="test.echo",
         dependencies=[Dependency(upstream_task_id="t1", downstream_task_id="t2")],
-        input_references={"msg": DataReference(key="out", source_task_id="t1")},
+        input_references={"msg": DataReference(key="output", source_task_id="t1")},
     )
     plan.add_task(t1)
     plan.add_task(t2)
@@ -297,6 +337,179 @@ def test_cancel_goal_already_completed_raises():
 
     with pytest.raises(ValueError, match="already completed"):
         orchestrator.cancel_goal(goal, plan)
+
+
+def test_execute_goal_applies_facts_from_runner():
+    """Verify GoalOrchestrator applies factual PlanExecutionResult from runner to Plan and Tasks."""
+
+    class FactualRunner:
+        def start(self, plan: Plan) -> ExecutionHandle:
+            return ExecutionHandle(execution_id="fact-1", plan_id=plan.plan_id)
+
+        def wait(self, handle: ExecutionHandle, timeout: Optional[float] = None) -> PlanExecutionResult:
+            # Runner does not touch plan, simply emits execution facts
+            return PlanExecutionResult(
+                execution_id=handle.execution_id,
+                plan_id=handle.plan_id,
+                status=PlanStatus.COMPLETED,
+                task_results={"t1": TaskResult(output="factual output")},
+                task_attempts={"t1": "att-t1-custom"},
+            )
+
+        def get_status(self, handle: ExecutionHandle) -> PlanExecutionSnapshot:
+            return PlanExecutionSnapshot(
+                execution_id=handle.execution_id,
+                plan_id=handle.plan_id,
+                status=PlanStatus.COMPLETED,
+                task_statuses={"t1": TaskStatus.COMPLETED},
+                is_terminal=True,
+            )
+
+        def cancel(self, handle: ExecutionHandle) -> None:
+            pass
+
+        def run(self, plan: Plan) -> Any:
+            handle = self.start(plan)
+            return self.wait(handle)
+
+    orchestrator = GoalOrchestrator(runner=FactualRunner())
+    goal = Goal(goal_id="g-facts", description="Facts Goal")
+    plan = Plan(plan_id="p-facts", goal_id="g-facts", title="Facts Plan")
+    plan.add_task(Task(task_id="t1", plan_id="p-facts", title="T1", capability_id="test.echo"))
+
+    # Plan is initially PENDING with no attempts
+    assert plan.tasks["t1"].status == TaskStatus.PENDING
+    assert len(plan.tasks["t1"].attempts) == 0
+
+    orchestrator.execute_goal(goal, plan)
+
+    # GoalOrchestrator applied the facts to the domain entities
+    assert goal.status == GoalStatus.COMPLETED
+    assert plan.status == PlanStatus.COMPLETED
+    assert plan.tasks["t1"].status == TaskStatus.COMPLETED
+    assert plan.tasks["t1"].result is not None
+    assert plan.tasks["t1"].result.output == "factual output"
+    assert len(plan.tasks["t1"].attempts) == 1
+    assert plan.tasks["t1"].attempts[0].attempt_id == "att-t1-custom"
+
+
+def test_cancel_goal_delegates_to_runner_cancel():
+    """Verify cancel_goal delegates cancellation through runner.cancel(handle)."""
+    cancelled_handles = []
+
+    class CancellableRunner:
+        def __init__(self) -> None:
+            self.orchestrator: Optional[GoalOrchestrator] = None
+
+        def start(self, plan: Plan) -> ExecutionHandle:
+            return ExecutionHandle(execution_id="handle-cancel", plan_id=plan.plan_id)
+
+        def wait(self, handle: ExecutionHandle, timeout: Optional[float] = None) -> PlanExecutionResult:
+            # Simulate cancellation while waiting
+            assert self.orchestrator is not None
+            goal = Goal(goal_id="g-active", description="Active Goal")
+            goal.status = GoalStatus.ACTIVE
+            self.orchestrator.cancel_goal(goal)
+
+            return PlanExecutionResult(
+                execution_id=handle.execution_id,
+                plan_id=handle.plan_id,
+                status=PlanStatus.CANCELLED,
+            )
+
+        def get_status(self, handle: ExecutionHandle) -> PlanExecutionSnapshot:
+            return PlanExecutionSnapshot(
+                execution_id=handle.execution_id,
+                plan_id=handle.plan_id,
+                status=PlanStatus.CANCELLED,
+                task_statuses={},
+                is_terminal=True,
+            )
+
+        def cancel(self, handle: ExecutionHandle) -> None:
+            cancelled_handles.append(handle.execution_id)
+
+        def run(self, plan: Plan) -> Any:
+            handle = self.start(plan)
+            return self.wait(handle)
+
+    runner = CancellableRunner()
+    orchestrator = GoalOrchestrator(runner=runner)
+    runner.orchestrator = orchestrator
+
+    goal = Goal(goal_id="g-active", description="Active Goal")
+    plan = Plan(plan_id="p-active", goal_id="g-active", title="Active Plan")
+    plan.add_task(Task(task_id="t1", plan_id="p-active", title="T1", capability_id="test.echo"))
+
+    orchestrator.execute_goal(goal, plan)
+
+    assert "handle-cancel" in cancelled_handles
+    assert goal.status == GoalStatus.CANCELLED
+    assert plan.status == PlanStatus.CANCELLED
+
+
+def test_execute_and_cancel_goal_async_native():
+    """Verify execute_goal_async and cancel_goal_async with async runner."""
+    async def _test():
+        cancelled_handles = []
+
+        class AsyncRunner:
+            async def start_async(self, plan: Plan) -> ExecutionHandle:
+                return ExecutionHandle(execution_id="async-h1", plan_id=plan.plan_id)
+
+            async def wait_async(self, handle: ExecutionHandle) -> PlanExecutionResult:
+                return PlanExecutionResult(
+                    execution_id=handle.execution_id,
+                    plan_id=handle.plan_id,
+                    status=PlanStatus.COMPLETED,
+                    task_results={"t1": TaskResult(output="async output")},
+                )
+
+            async def cancel_async(self, handle: ExecutionHandle) -> None:
+                cancelled_handles.append(handle.execution_id)
+
+            def start(self, plan: Plan) -> ExecutionHandle:
+                raise NotImplementedError
+
+            def wait(self, handle: ExecutionHandle, timeout: Optional[float] = None) -> PlanExecutionResult:
+                raise NotImplementedError
+
+            def get_status(self, handle: ExecutionHandle) -> PlanExecutionSnapshot:
+                raise NotImplementedError
+
+            def cancel(self, handle: ExecutionHandle) -> None:
+                raise NotImplementedError
+
+            def run(self, plan: Plan) -> Any:
+                raise NotImplementedError
+
+        runner = AsyncRunner()
+        orchestrator = GoalOrchestrator(runner=runner)  # type: ignore[arg-type]
+
+        goal = Goal(goal_id="g-async", description="Async Goal")
+        plan = Plan(plan_id="p-async", goal_id="g-async", title="Async Plan")
+        plan.add_task(Task(task_id="t1", plan_id="p-async", title="T1", capability_id="test.echo"))
+
+        res_goal = await orchestrator.execute_goal_async(goal, plan)
+        assert res_goal.status == GoalStatus.COMPLETED
+        assert plan.status == PlanStatus.COMPLETED
+        assert plan.tasks["t1"].status == TaskStatus.COMPLETED
+        assert plan.tasks["t1"].result is not None
+        assert plan.tasks["t1"].result.output == "async output"
+
+        # Test cancel_goal_async when handle is in _active_handles
+        active_goal = Goal(goal_id="g-active-async", description="Active Async")
+        active_plan = Plan(plan_id="p-active-async", goal_id="g-active-async", title="P")
+        active_plan.add_task(Task(task_id="t2", plan_id="p-active-async", title="T2", capability_id="test.echo"))
+        orchestrator._active_handles["g-active-async"] = ExecutionHandle("async-h2", "p-active-async")
+
+        await orchestrator.cancel_goal_async(active_goal, active_plan)
+        assert "async-h2" in cancelled_handles
+        assert active_goal.status == GoalStatus.CANCELLED
+        assert active_plan.status == PlanStatus.CANCELLED
+
+    asyncio.run(_test())
+
 
 
 # ---------------------------------------------------------------------------

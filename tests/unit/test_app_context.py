@@ -206,3 +206,22 @@ def test_two_app_contexts_are_independent(tmp_path: Path):
     assert ctx_a is not ctx_b
     assert ctx_a.core is not ctx_b.core
     assert ctx_a.inference is not ctx_b.inference
+
+
+def test_app_context_type_hints_resolvable():
+    """Verify runtime type hints on AppContext methods resolve without NameError."""
+    import typing
+    from typing import Optional
+    from orchestration import GoalOrchestrator, InProcessPlanRunner, PlanRunner
+    from core import FoundationCore
+
+    hints_orch = typing.get_type_hints(AppContext.create_goal_orchestrator)
+    assert hints_orch["runner"] == Optional[PlanRunner]
+    assert hints_orch["return"] is GoalOrchestrator
+
+    hints_runner = typing.get_type_hints(AppContext.create_in_process_plan_runner)
+    assert hints_runner["return"] is InProcessPlanRunner
+
+    hints_cls = typing.get_type_hints(AppContext)
+    assert hints_cls["core"] is FoundationCore
+    assert hints_cls["inference"] is InferenceConnector

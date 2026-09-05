@@ -16,7 +16,7 @@ It does NOT:
 - Depend on Celery, PostgreSQL, Docker, or async runtimes.
 """
 
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from orchestration.capabilities.base import CapabilityContext
 from orchestration.capabilities.registry import CapabilityRegistry
@@ -28,6 +28,11 @@ from orchestration.domain.types import (
     TaskStatus,
 )
 from orchestration.domain.results import TaskError
+from orchestration.execution.base import (
+    ExecutionHandle,
+    PlanExecutionResult,
+    PlanExecutionSnapshot,
+)
 
 
 class InProcessPlanRunner:
@@ -41,19 +46,19 @@ class InProcessPlanRunner:
                 executable Capability implementations.
         """
         self._registry = registry
+        self._executions: Dict[str, Plan] = {}
 
-    def run(self, plan: Plan) -> Plan:
-        """Drive an active or draft Plan to completion in-process.
+    def start(self, plan: Plan) -> ExecutionHandle:
+        """Initiate plan execution in-process.
 
         Args:
             plan: The Plan to execute. If in DRAFT status, it is activated.
 
         Returns:
-            The executed Plan in its terminal state (COMPLETED or FAILED).
+            ExecutionHandle identifying the execution instance.
 
         Raises:
-            ValueError: If the plan is already in a terminal state (COMPLETED,
-                FAILED, CANCELLED) or has no tasks.
+            ValueError: If plan is already terminal or has no tasks.
         """
         if plan.status == PlanStatus.DRAFT:
             plan.activate()
@@ -69,6 +74,106 @@ class InProcessPlanRunner:
                 f"Cannot run plan '{plan.plan_id}': plan has no tasks."
             )
 
+        execution_id = f"exec-{plan.plan_id}-{len(self._executions) + 1}"
+        self._executions[execution_id] = plan
+        return ExecutionHandle(
+            execution_id=execution_id,
+            plan_id=plan.plan_id,
+            backend_info={"engine": "in_process"},
+        )
+
+    def wait(
+        self,
+        handle: ExecutionHandle,
+        timeout: Optional[float] = None,
+    ) -> PlanExecutionResult:
+        """Drive an execution to completion and return terminal facts.
+
+        Args:
+            handle: The ExecutionHandle returned by start().
+            timeout: Optional timeout (unused for synchronous in-process runner).
+
+        Returns:
+            PlanExecutionResult containing terminal execution facts.
+
+        Raises:
+            ValueError: If handle is not found.
+        """
+        plan = self._executions.get(handle.execution_id)
+        if plan is None:
+            raise ValueError(f"Execution '{handle.execution_id}' not found.")
+
+        if plan.status == PlanStatus.ACTIVE:
+            self._drive_plan_to_completion(plan)
+
+        return self._create_execution_result(plan, handle.execution_id)
+
+    def get_status(self, handle: ExecutionHandle) -> PlanExecutionSnapshot:
+        """Query the current status of an execution.
+
+        Args:
+            handle: The ExecutionHandle to query.
+
+        Returns:
+            PlanExecutionSnapshot reflecting the execution state.
+
+        Raises:
+            ValueError: If handle is not found.
+        """
+        plan = self._executions.get(handle.execution_id)
+        if plan is None:
+            raise ValueError(f"Execution '{handle.execution_id}' not found.")
+
+        return PlanExecutionSnapshot(
+            execution_id=handle.execution_id,
+            plan_id=plan.plan_id,
+            status=plan.status,
+            task_statuses={t_id: t.status for t_id, t in plan.tasks.items()},
+            is_terminal=plan.status in (
+                PlanStatus.COMPLETED,
+                PlanStatus.FAILED,
+                PlanStatus.CANCELLED,
+            ),
+        )
+
+    def cancel(self, handle: ExecutionHandle) -> None:
+        """Cancel a running execution in-process.
+
+        Args:
+            handle: The ExecutionHandle to cancel.
+
+        Raises:
+            ValueError: If handle is not found.
+        """
+        plan = self._executions.get(handle.execution_id)
+        if plan is None:
+            raise ValueError(f"Execution '{handle.execution_id}' not found.")
+
+        for task in plan.tasks.values():
+            if task.status not in (TaskStatus.COMPLETED, TaskStatus.CANCELLED):
+                task.cancel()
+
+        if plan.status != PlanStatus.CANCELLED:
+            plan.cancel()
+
+    def run(self, plan: Plan) -> Plan:
+        """Convenience method: start execution, wait for completion, return plan.
+
+        Args:
+            plan: The Plan to execute. If in DRAFT status, it is activated.
+
+        Returns:
+            The executed Plan in its terminal state (COMPLETED or FAILED).
+
+        Raises:
+            ValueError: If the plan is already in a terminal state or has no tasks.
+        """
+        handle = self.start(plan)
+        self.wait(handle)
+        return plan
+
+    def _drive_plan_to_completion(self, plan: Plan) -> None:
+        """Execute the DAG loop until the plan reaches a terminal state."""
         while True:
             # 1. Update readiness across all uncompleted tasks
             current_statuses = {t_id: t.status for t_id, t in plan.tasks.items()}
@@ -85,29 +190,54 @@ class InProcessPlanRunner:
                 # All tasks completed successfully
                 if all(t.status == TaskStatus.COMPLETED for t in plan.tasks.values()):
                     plan.mark_completed()
-                    return plan
+                    return
 
                 # Any task failed or remaining tasks are blocked
                 if any(t.status == TaskStatus.FAILED for t in plan.tasks.values()):
                     plan.mark_failed()
-                    return plan
+                    return
 
                 if any(t.status in (TaskStatus.BLOCKED, TaskStatus.CANCELLED) for t in plan.tasks.values()):
                     plan.mark_failed()
-                    return plan
+                    return
 
                 # Tasks remain pending but none are ready (unresolvable dependency)
                 if any(t.status == TaskStatus.PENDING for t in plan.tasks.values()):
                     plan.mark_failed()
-                    return plan
+                    return
 
                 # Catch-all termination
                 plan.mark_failed()
-                return plan
+                return
 
             # 4. Execute the first ready task
             task = ready_tasks[0]
             self._execute_task(task, plan)
+
+    def _create_execution_result(
+        self,
+        plan: Plan,
+        execution_id: str,
+    ) -> PlanExecutionResult:
+        """Compile terminal execution facts from the completed plan."""
+        task_results = {
+            t_id: t.result for t_id, t in plan.tasks.items() if t.result is not None
+        }
+        task_errors = {}
+        for t_id, t in plan.tasks.items():
+            if t.attempts and t.attempts[-1].error is not None:
+                task_errors[t_id] = t.attempts[-1].error
+
+        return PlanExecutionResult(
+            execution_id=execution_id,
+            plan_id=plan.plan_id,
+            status=plan.status,
+            task_results=task_results,
+            task_errors=task_errors,
+            started_at=plan.created_at,
+            completed_at=plan.completed_at,
+        )
+
 
     def _execute_task(self, task: Task, plan: Plan) -> None:
         """Execute a single ready task and record the outcome on its lifecycle.
@@ -190,9 +320,13 @@ class InProcessPlanRunner:
                     resolved[logical_name] = source_output[ref.key]
                 elif hasattr(source_output, ref.key):
                     resolved[logical_name] = getattr(source_output, ref.key)
-                else:
-                    # Otherwise pass the output directly
+                elif ref.key == "output":
                     resolved[logical_name] = source_output
+                else:
+                    raise ValueError(
+                        f"Cannot resolve input reference '{logical_name}' for task '{task.task_id}': "
+                        f"key '{ref.key}' not found in output of upstream task '{ref.source_task_id}'."
+                    )
             elif ref.uri is not None:
                 resolved[logical_name] = ref.uri
             else:

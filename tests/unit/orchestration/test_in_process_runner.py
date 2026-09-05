@@ -307,3 +307,106 @@ def test_runner_reference_without_source_or_uri_fails_honestly():
     assert task.error is not None
     assert task.error.category == TaskErrorCategory.EXECUTION
     assert "neither 'source_task_id' nor 'uri'" in task.error.message
+
+
+def test_in_process_runner_lifecycle_start_and_wait():
+    """Verify decoupled start and wait execution."""
+    registry = CapabilityRegistry()
+    registry.register(UppercaseCapability())
+
+    plan = Plan(plan_id="p-lifecycle", goal_id="g-1", title="Lifecycle Plan")
+    plan.add_task(
+        Task(
+            task_id="t1",
+            plan_id="p-lifecycle",
+            title="T1",
+            capability_id="test.uppercase",
+            parameters={"text": "hello lifecycle"},
+        )
+    )
+
+    runner = InProcessPlanRunner(registry)
+    handle = runner.start(plan)
+    assert handle.plan_id == "p-lifecycle"
+    assert handle.execution_id.startswith("exec-p-lifecycle")
+
+    # Status before wait
+    status_snapshot = runner.get_status(handle)
+    assert status_snapshot.plan_id == "p-lifecycle"
+    assert status_snapshot.status == PlanStatus.ACTIVE
+    assert not status_snapshot.is_terminal
+
+    # Wait
+    result = runner.wait(handle)
+    assert result.status == PlanStatus.COMPLETED
+    assert "t1" in result.task_results
+    assert result.task_results["t1"].output == "HELLO LIFECYCLE"
+
+    # Status after wait
+    status_after = runner.get_status(handle)
+    assert status_after.status == PlanStatus.COMPLETED
+    assert status_after.is_terminal
+
+
+def test_in_process_runner_lifecycle_cancel():
+    """Verify cancelling an in-flight execution."""
+    registry = CapabilityRegistry()
+    registry.register(UppercaseCapability())
+
+    plan = Plan(plan_id="p-cancel-run", goal_id="g-1", title="Cancel Plan")
+    plan.add_task(
+        Task(
+            task_id="t1",
+            plan_id="p-cancel-run",
+            title="T1",
+            capability_id="test.uppercase",
+            parameters={"text": "cancel me"},
+        )
+    )
+
+    runner = InProcessPlanRunner(registry)
+    handle = runner.start(plan)
+    runner.cancel(handle)
+
+    status_snapshot = runner.get_status(handle)
+    assert status_snapshot.status == PlanStatus.CANCELLED
+    assert status_snapshot.is_terminal
+    assert plan.status == PlanStatus.CANCELLED
+    assert plan.tasks["t1"].status == TaskStatus.CANCELLED
+
+
+def test_runner_fails_when_ref_key_missing_from_dict():
+    """Verify input_reference resolution raises ValueError and fails task when ref.key is missing from dict output."""
+    registry = CapabilityRegistry()
+    registry.register(DictOutputCapability())
+    registry.register(UppercaseCapability())
+
+    plan = Plan(plan_id="p-missing-key", goal_id="g-1", title="Missing Key Plan")
+    task_producer = Task(
+        task_id="t-prod",
+        plan_id="p-missing-key",
+        title="Producer",
+        capability_id="test.dict_producer",
+    )
+    task_consumer = Task(
+        task_id="t-cons",
+        plan_id="p-missing-key",
+        title="Consumer",
+        capability_id="test.uppercase",
+        dependencies=[Dependency(upstream_task_id="t-prod", downstream_task_id="t-cons")],
+        input_references={
+            "text": DataReference(key="nonexistent_field", source_task_id="t-prod"),
+        },
+    )
+    plan.add_task(task_producer)
+    plan.add_task(task_consumer)
+
+    runner = InProcessPlanRunner(registry)
+    completed_plan = runner.run(plan)
+
+    assert completed_plan.status == PlanStatus.FAILED
+    assert task_producer.status == TaskStatus.COMPLETED
+    assert task_consumer.status == TaskStatus.FAILED
+    assert task_consumer.error is not None
+    assert "nonexistent_field" in task_consumer.error.message
+    assert "not found in output" in task_consumer.error.message

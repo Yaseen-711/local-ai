@@ -27,6 +27,7 @@ from typing import Optional, Union
 
 from connectors import FoundationInferenceConnector, InferenceConnector
 from core import FoundationCore
+from orchestration import GoalOrchestrator, InProcessPlanRunner, PlanRunner
 from workflows import TextAnalysisWorkflow
 
 

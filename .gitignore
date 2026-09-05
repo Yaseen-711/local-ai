@@ -46,3 +46,6 @@ models/**/*.onnx
 *.swp
 *.swo
 *~
+
+# Project Reports
+local_ai_foundation_report.txt
