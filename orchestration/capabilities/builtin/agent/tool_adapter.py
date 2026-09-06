@@ -281,4 +281,39 @@ class CapabilityToolAdapter:
                 )
             )
 
+        # 5. code.verify_and_repair
+        if "code.verify_and_repair" in allowed_capabilities and self._registry.has("code.verify_and_repair"):
+            def code_verify_and_repair(
+                prompt: str,
+                category: str = "general_code",
+                assertions: Optional[List[Dict[str, Any]]] = None,
+                max_repair_attempts: int = 3,
+                timeout_seconds: float = 30.0,
+            ) -> Any:
+                """Execute bounded code generation, isolated execution, testing, and repair cycle."""
+                params = {
+                    "category": category,
+                    "max_repair_attempts": max_repair_attempts,
+                    "timeout_seconds": timeout_seconds,
+                }
+                inputs = {
+                    "prompt": prompt,
+                    "assertions": assertions or [],
+                }
+                return self._execute_capability_with_tracking(
+                    capability_id="code.verify_and_repair",
+                    parameters=params,
+                    inputs=inputs,
+                    allowed_capabilities=allowed_capabilities,
+                    parent_context=parent_context,
+                )
+
+            tools.append(
+                Tool(
+                    code_verify_and_repair,
+                    name="code_verify_and_repair",
+                    description="Generate, sandbox-execute, test, and repair code with bounded retries and objective verification.",
+                )
+            )
+
         return tools

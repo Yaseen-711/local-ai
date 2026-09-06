@@ -246,3 +246,25 @@ def test_app_context_registry_includes_vision(tmp_path: Path):
 
     registry = ctx.create_base_capability_registry()
     assert registry.has("vision.inspect")
+
+
+def test_app_context_create_code_repair_capability(tmp_path: Path):
+    """create_code_repair_capability returns CodeVerificationRepairCapability wired to context."""
+    from orchestration.capabilities.builtin.code_repair import CodeVerificationRepairCapability
+
+    env = _make_tmp_env(tmp_path)
+    ctx = AppContext.create(**env)
+
+    cap = ctx.create_code_repair_capability()
+    assert isinstance(cap, CodeVerificationRepairCapability)
+    assert cap.capability_id == "code.verify_and_repair"
+
+
+def test_app_context_registry_includes_code_verify_and_repair(tmp_path: Path):
+    """create_base_capability_registry registers code.verify_and_repair."""
+    env = _make_tmp_env(tmp_path)
+    ctx = AppContext.create(**env)
+
+    registry = ctx.create_base_capability_registry()
+    assert registry.has("code.verify_and_repair")
+

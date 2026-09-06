@@ -110,6 +110,23 @@ class AppContext:
         """
         return TextAnalysisWorkflow(inference=self.inference)
 
+    def create_code_repair_workflow(
+        self,
+        workspace_capability: Optional[Any] = None,
+        model_id: str = "default",
+        generator_fn: Optional[Any] = None,
+    ) -> Any:
+        """Create a CodeTestRepairWorkflow wired to InferenceConnector and WorkspaceCodingCapability."""
+        from workflows.code_repair import CodeTestRepairWorkflow
+
+        ws_cap = workspace_capability or self.create_workspace_coding_capability()
+        return CodeTestRepairWorkflow(
+            connector=self.inference,
+            workspace_capability=ws_cap,
+            model_id=model_id,
+            generator_fn=generator_fn,
+        )
+
     # ------------------------------------------------------------------ #
     # Capability Factories                                              #
     # ------------------------------------------------------------------ #
@@ -221,10 +238,18 @@ class AppContext:
 
         return VisionInspectionCapability(connector=self.inference)
 
+    def create_code_repair_capability(self, workflow: Optional[Any] = None) -> Any:
+        """Create a CodeVerificationRepairCapability wired to CodeTestRepairWorkflow."""
+        from orchestration.capabilities.builtin.code_repair import CodeVerificationRepairCapability
+
+        wf = workflow or self.create_code_repair_workflow()
+        return CodeVerificationRepairCapability(workflow=wf)
+
     def create_base_capability_registry(self) -> Any:
         """Create a CapabilityRegistry with base capabilities registered (excluding agent)."""
         from orchestration.capabilities import CapabilityRegistry
         from orchestration.capabilities.builtin import (
+            CodeVerificationRepairCapability,
             InferencePromptCapability,
             TextAnalysisCapability,
             VisionInspectionCapability,
@@ -239,6 +264,7 @@ class AppContext:
         registry.register(self.create_artifact_generation_capability())
         registry.register(self.create_workspace_coding_capability())
         registry.register(self.create_vision_inspection_capability())
+        registry.register(self.create_code_repair_capability())
         return registry
 
     def create_agent_capability(
