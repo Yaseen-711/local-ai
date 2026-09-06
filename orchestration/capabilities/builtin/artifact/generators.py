@@ -223,3 +223,129 @@ class PdfGenerator:
                 story.append(Spacer(1, 14))
 
         doc.build(story)
+
+
+class PptxGenerator:
+    """Deterministic PPTX presentation generator using python-pptx."""
+
+    @staticmethod
+    def generate(request: ArtifactGenerationRequest, output_path: Path) -> None:
+        import pptx
+        from pptx.dml.color import RGBColor
+        from pptx.util import Inches, Pt
+
+        prs = pptx.Presentation()
+        prs.slide_width = Inches(13.333)
+        prs.slide_height = Inches(7.5)
+
+        # 1. Title Slide if title provided
+        if request.title:
+            title_layout = prs.slide_layouts[0]
+            slide = prs.slides.add_slide(title_layout)
+            title = slide.shapes.title
+            if title:
+                title.text = request.title
+
+        # 2. Content Slides from markdown prose
+        if request.content:
+            lines = [line.rstrip() for line in request.content.splitlines()]
+            current_heading: str | None = None
+            current_bullets: List[str] = []
+            current_paragraphs: List[str] = []
+
+            def _flush_content_slide() -> None:
+                nonlocal current_heading, current_bullets, current_paragraphs
+                if not current_heading and not current_bullets and not current_paragraphs:
+                    return
+                slide = prs.slides.add_slide(prs.slide_layouts[5])  # Title Only layout
+                if slide.shapes.title:
+                    slide.shapes.title.text = current_heading or "Overview"
+                    for p in slide.shapes.title.text_frame.paragraphs:
+                        p.font.size = Pt(24)
+                        p.font.bold = True
+
+                tx_box = slide.shapes.add_textbox(Inches(0.8), Inches(1.8), Inches(11.7), Inches(5.0))
+                tf = tx_box.text_frame
+                tf.word_wrap = True
+
+                is_first = True
+                for p_text in current_paragraphs:
+                    p = tf.paragraphs[0] if is_first else tf.add_paragraph()
+                    is_first = False
+                    p.text = p_text
+                    p.font.size = Pt(16)
+                    p.space_after = Pt(10)
+
+                for b_text in current_bullets:
+                    p = tf.paragraphs[0] if is_first else tf.add_paragraph()
+                    is_first = False
+                    p.text = f"•  {b_text}"
+                    p.font.size = Pt(15)
+                    p.space_after = Pt(6)
+
+                current_heading = None
+                current_bullets = []
+                current_paragraphs = []
+
+            i = 0
+            while i < len(lines):
+                line = lines[i].strip()
+                if not line:
+                    i += 1
+                    continue
+                if line.startswith("# ") or line.startswith("## ") or line.startswith("### "):
+                    _flush_content_slide()
+                    current_heading = line.lstrip("#").strip()
+                    i += 1
+                elif line.startswith("- ") or line.startswith("* "):
+                    current_bullets.append(line.lstrip("-* ").strip())
+                    i += 1
+                else:
+                    para_lines = [line]
+                    i += 1
+                    while i < len(lines) and lines[i].strip() and not lines[i].strip().startswith(("#", "-", "*")):
+                        para_lines.append(lines[i].strip())
+                        i += 1
+                    current_paragraphs.append(" ".join(para_lines))
+
+            _flush_content_slide()
+
+        # 3. Data Tables as Presentation Slides
+        sheets = _normalize_table_data(request.data)
+        for sheet_name, grid in sheets.items():
+            if grid and len(grid) > 0:
+                slide = prs.slides.add_slide(prs.slide_layouts[5])
+                if slide.shapes.title:
+                    slide.shapes.title.text = sheet_name
+                    for p in slide.shapes.title.text_frame.paragraphs:
+                        p.font.size = Pt(24)
+                        p.font.bold = True
+
+                num_rows = len(grid)
+                num_cols = len(grid[0]) if num_rows > 0 else 0
+                if num_cols > 0 and num_rows > 0:
+                    tbl_width = Inches(11.7)
+                    tbl_height = min(Inches(5.0), Inches(0.4 * num_rows + 0.6))
+                    table_shape = slide.shapes.add_table(
+                        num_rows, num_cols, Inches(0.8), Inches(1.8), tbl_width, tbl_height
+                    )
+                    table = table_shape.table
+
+                    for r_idx, row in enumerate(grid):
+                        for c_idx, val in enumerate(row):
+                            cell = table.cell(r_idx, c_idx)
+                            cell.text = str(val)
+                            if r_idx == 0:
+                                cell.fill.solid()
+                                cell.fill.fore_color.rgb = RGBColor(0x1F, 0x4E, 0x79)
+                                for p in cell.text_frame.paragraphs:
+                                    p.font.bold = True
+                                    p.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+                                    p.font.size = Pt(12)
+                            else:
+                                for p in cell.text_frame.paragraphs:
+                                    p.font.size = Pt(11)
+
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        prs.save(str(output_path))
+

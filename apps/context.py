@@ -452,6 +452,8 @@ class AppContext:
                         "create excel file",
                         "generate pdf report",
                         "create docx document",
+                        "create presentation",
+                        "generate pptx slides",
                     ],
                 ),
                 RouteDefinition(

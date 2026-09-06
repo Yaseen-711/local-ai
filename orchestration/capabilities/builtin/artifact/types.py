@@ -11,6 +11,7 @@ class ArtifactFormat(str, Enum):
     """Supported deterministic artifact formats."""
     XLSX = "xlsx"
     DOCX = "docx"
+    PPTX = "pptx"
     PDF = "pdf"
 
 

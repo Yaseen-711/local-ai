@@ -16,6 +16,7 @@ from orchestration.capabilities.base import CapabilityContext
 from orchestration.capabilities.builtin.artifact.generators import (
     DocxGenerator,
     PdfGenerator,
+    PptxGenerator,
     XlsxGenerator,
 )
 from orchestration.capabilities.builtin.artifact.types import (
@@ -28,6 +29,7 @@ from orchestration.domain.results import TaskResult
 _MIME_MAP = {
     ArtifactFormat.XLSX: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     ArtifactFormat.DOCX: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ArtifactFormat.PPTX: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     ArtifactFormat.PDF: "application/pdf",
 }
 
@@ -82,12 +84,18 @@ class ArtifactGenerationCapability:
         inputs: Dict[str, Any],
         context: CapabilityContext,
     ) -> TaskResult:
+        template_name = parameters.get("template") or inputs.get("template")
+        template_data = inputs.get("template_data") if "template_data" in inputs else parameters.get("template_data")
+
         # 1. Format
-        fmt_str = str(
-            parameters.get("artifact_type")
-            or inputs.get("artifact_type")
-            or "xlsx"
-        ).lower()
+        fmt_str = parameters.get("artifact_type") or inputs.get("artifact_type")
+        if not fmt_str and template_name:
+            from orchestration.capabilities.builtin.artifact.templates import SUPPORTED_TEMPLATES
+            inferred = SUPPORTED_TEMPLATES.get(str(template_name).lower().strip())
+            if inferred:
+                fmt_str = inferred.value
+        fmt_str = str(fmt_str or "xlsx").lower()
+
         try:
             art_format = ArtifactFormat(fmt_str)
         except ValueError:
@@ -122,11 +130,21 @@ class ArtifactGenerationCapability:
             content=content,
         )
 
-        # 4. Invoke deterministic generator
-        if art_format == ArtifactFormat.XLSX:
+        # 4. Invoke deterministic generator or template renderer
+        if template_name:
+            from orchestration.capabilities.builtin.artifact.templates import render_template
+            render_template(
+                template_name=str(template_name),
+                template_data=template_data or data,
+                output_path=output_path,
+                art_format=art_format,
+            )
+        elif art_format == ArtifactFormat.XLSX:
             XlsxGenerator.generate(request, output_path)
         elif art_format == ArtifactFormat.DOCX:
             DocxGenerator.generate(request, output_path)
+        elif art_format == ArtifactFormat.PPTX:
+            PptxGenerator.generate(request, output_path)
         elif art_format == ArtifactFormat.PDF:
             PdfGenerator.generate(request, output_path)
 

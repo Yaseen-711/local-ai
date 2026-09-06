@@ -28,11 +28,13 @@ class DirectDocumentRequest(BaseModel):
 
 class DirectArtifactRequest(BaseModel):
     """Input parameters for direct artifact generation."""
-    artifact_type: str = Field(description="'xlsx', 'docx', or 'pdf'")
+    artifact_type: str = Field(default="xlsx", description="'xlsx', 'docx', 'pptx', or 'pdf'")
     filename: Optional[str] = Field(default=None, description="Target filename")
     title: Optional[str] = Field(default=None, description="Document/report title")
     data: Optional[Any] = Field(default=None, description="Tabular data (dict of sheets or table grid)")
-    content: Optional[str] = Field(default=None, description="Markdown/prose content for docx/pdf")
+    content: Optional[str] = Field(default=None, description="Markdown/prose content for docx/pdf/pptx")
+    template: Optional[str] = Field(default=None, description="Industrial template name ('approval_note', 'calculation_workbook', 'executive_presentation')")
+    template_data: Optional[Any] = Field(default=None, description="Structured template payload")
 
 
 class DirectTextAnalysisRequest(BaseModel):

@@ -232,17 +232,23 @@ class CapabilityToolAdapter:
                 title: Optional[str] = None,
                 data: Optional[Any] = None,
                 content: Optional[str] = None,
+                template: Optional[str] = None,
+                template_data: Optional[Any] = None,
             ) -> Any:
-                """Generate deterministic XLSX, DOCX, or PDF binary artifact with SHA-256 provenance."""
-                params = {
+                """Generate deterministic XLSX, DOCX, PPTX, or PDF binary artifact with SHA-256 provenance."""
+                params: Dict[str, Any] = {
                     "artifact_type": artifact_type,
                     "filename": filename,
                     "title": title,
                 }
-                inputs = {
+                if template:
+                    params["template"] = template
+                inputs: Dict[str, Any] = {
                     "data": data,
                     "content": content,
                 }
+                if template_data is not None:
+                    inputs["template_data"] = template_data
                 return self._execute_capability_with_tracking(
                     capability_id="artifact.generate",
                     parameters=params,
@@ -255,7 +261,7 @@ class CapabilityToolAdapter:
                 Tool(
                     artifact_generate,
                     name="artifact_generate",
-                    description="Generate deterministic XLSX, DOCX, or PDF files from structured data or markdown.",
+                    description="Generate deterministic XLSX, DOCX, PPTX, or PDF files from structured data, markdown, or industrial templates.",
                 )
             )
 

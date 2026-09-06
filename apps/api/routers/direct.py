@@ -172,7 +172,7 @@ async def execute_direct_artifact(
     req: DirectArtifactRequest,
     context: AppContext = Depends(get_app_context),
 ) -> DirectCapabilityResponse:
-    """Execute synchronous deterministic artifact compilation (XLSX, DOCX, PDF)."""
+    """Execute synchronous deterministic artifact compilation (XLSX, DOCX, PPTX, PDF)."""
     cap = context.create_artifact_generation_capability()
     cap_ctx = CapabilityContext(execution_id=f"direct-art-{uuid.uuid4().hex[:8]}")
 
@@ -183,12 +183,16 @@ async def execute_direct_artifact(
         parameters["filename"] = req.filename
     if req.title:
         parameters["title"] = req.title
+    if req.template:
+        parameters["template"] = req.template
 
     inputs: Dict[str, Any] = {}
     if req.data is not None:
         inputs["data"] = req.data
     if req.content is not None:
         inputs["content"] = req.content
+    if req.template_data is not None:
+        inputs["template_data"] = req.template_data
 
     result: TaskResult = await asyncio.to_thread(
         cap.execute,
