@@ -164,6 +164,27 @@ async def execute_direct_document(
         context=cap_ctx,
     )
 
+    if req.query:
+        extracted_text = result.output.get("text", "") if isinstance(result.output, dict) else ""
+        system_prompt = (
+            "You are an industrial engineering document assistant. Answer the user's question "
+            "grounded strictly in the provided document content. If the information is not present, "
+            "state so clearly. Preserve exact tags, numbers, and engineering units."
+        )
+        user_prompt = f"Document Context:\n{extracted_text}\n\nQuestion: {req.query}"
+
+        qa_resp = await asyncio.to_thread(
+            context.inference.infer_prompt,
+            prompt=user_prompt,
+            system_prompt=system_prompt,
+            temperature=0.1,
+            max_tokens=512,
+        )
+        answer_text = qa_resp.message.content if hasattr(qa_resp, "message") else str(qa_resp)
+        if isinstance(result.output, dict):
+            result.output["query"] = req.query
+            result.output["answer"] = answer_text
+
     return _to_response("document.understand", result)
 
 

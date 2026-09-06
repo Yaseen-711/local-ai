@@ -24,6 +24,7 @@ class DirectDocumentRequest(BaseModel):
     extract_tables: bool = Field(default=True, description="Extract structured tables")
     extract_figures: bool = Field(default=False, description="Extract figures/diagrams")
     max_pages: Optional[int] = Field(default=None, ge=1)
+    query: Optional[str] = Field(default=None, description="Question or prompt to answer based on document contents")
 
 
 class DirectArtifactRequest(BaseModel):

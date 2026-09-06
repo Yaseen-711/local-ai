@@ -106,8 +106,10 @@ async def create_goal(
         from apps.api.dependencies import get_staging_dir
         matches = list(get_staging_dir().glob(f"{file_id}_*"))
         if matches and matches[0].is_file():
-            inputs["image_path"] = str(matches[0].resolve())
-            inputs["path"] = str(matches[0].resolve())
+            resolved_p = str(matches[0].resolve())
+            inputs["image_path"] = resolved_p
+            inputs["path"] = resolved_p
+            inputs["file_path"] = resolved_p
 
     combined_context: Dict[str, Any] = {
         "title": req.title or desc,
