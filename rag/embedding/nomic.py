@@ -107,6 +107,20 @@ class NomicEmbeddingModel(EmbeddingModel, Embedder):
                     "Install it or supply a custom backend callable."
                 ) from exc
             except Exception as exc:
+                if "CUDA out of memory" in str(exc) or "OutOfMemoryError" in type(exc).__name__:
+                    try:
+                        import torch
+                        torch.cuda.empty_cache()
+                        from sentence_transformers import SentenceTransformer
+                        self._loaded_model = SentenceTransformer(
+                            self._model_name,
+                            device="cpu",
+                            trust_remote_code=True,
+                            local_files_only=offline_active,
+                        )
+                        return self._loaded_model
+                    except Exception:
+                        pass
                 if offline_active:
                     raise OfflineModelNotFoundError(
                         model_name=self._model_name,
@@ -126,11 +140,24 @@ class NomicEmbeddingModel(EmbeddingModel, Embedder):
             raw_embeddings = self._custom_backend(formatted_texts)
         else:
             model = self._get_model()
-            raw_embeddings = model.encode(
-                formatted_texts,
-                normalize_embeddings=self.normalize,
-                convert_to_numpy=True,
-            ).tolist()
+            try:
+                raw_embeddings = model.encode(
+                    formatted_texts,
+                    normalize_embeddings=self.normalize,
+                    convert_to_numpy=True,
+                ).tolist()
+            except Exception as exc:
+                if "CUDA out of memory" in str(exc) or "OutOfMemoryError" in type(exc).__name__:
+                    import torch
+                    torch.cuda.empty_cache()
+                    model.to("cpu")
+                    raw_embeddings = model.encode(
+                        formatted_texts,
+                        normalize_embeddings=self.normalize,
+                        convert_to_numpy=True,
+                    ).tolist()
+                else:
+                    raise
 
         result: List[List[float]] = []
         for idx, emb in enumerate(raw_embeddings):

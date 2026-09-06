@@ -65,6 +65,7 @@ class CandidatePlan:
             title=self.title,
             status=PlanStatus.DRAFT,
             revisions=list(self.prior_revisions),
+            initial_inputs=dict(self.metadata.get("inputs", {})),
         )
         for ct in self.tasks:
             # Consolidate dependencies: both task-level and plan-level targeting this task

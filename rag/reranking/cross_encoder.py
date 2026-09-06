@@ -85,6 +85,20 @@ class CrossEncoderReranker(Reranker):
                     "Install sentence-transformers or provide a custom backend callable."
                 ) from exc
             except Exception as exc:
+                if "CUDA out of memory" in str(exc) or "OutOfMemoryError" in type(exc).__name__:
+                    try:
+                        import torch
+                        torch.cuda.empty_cache()
+                        from sentence_transformers import CrossEncoder
+                        self._model = CrossEncoder(
+                            self.config.model_name,
+                            device="cpu",
+                            trust_remote_code=self.config.trust_remote_code,
+                            local_files_only=offline_active,
+                        )
+                        return self._model
+                    except Exception:
+                        pass
                 if offline_active:
                     raise OfflineModelNotFoundError(
                         model_name=self.config.model_name,

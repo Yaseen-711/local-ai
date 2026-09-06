@@ -14,7 +14,7 @@ Plan lifecycle:
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from orchestration.domain.types import PlanStatus, TaskStatus
 from orchestration.domain.tasks import Task
@@ -64,6 +64,7 @@ class Plan:
     status: PlanStatus = PlanStatus.DRAFT
     tasks: Dict[str, Task] = field(default_factory=dict)
     revisions: List[PlanRevision] = field(default_factory=list)
+    initial_inputs: Dict[str, Any] = field(default_factory=dict)
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     completed_at: Optional[datetime] = None
 

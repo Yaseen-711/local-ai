@@ -126,7 +126,7 @@ class CapabilityToolAdapter:
                     error=str(exc),
                 )
             )
-            raise
+            return f"Error executing tool '{capability_id}': {exc}"
 
     def build_tools(
         self,
@@ -319,6 +319,83 @@ class CapabilityToolAdapter:
                     code_verify_and_repair,
                     name="code_verify_and_repair",
                     description="Generate, sandbox-execute, test, and repair code with bounded retries and objective verification.",
+                )
+            )
+
+        # 6. retrieval.rag
+        if "retrieval.rag" in allowed_capabilities and self._registry.has("retrieval.rag"):
+            def retrieval_rag(
+                query: str,
+                operation: str = "qa",
+                top_k: int = 10,
+                top_n: int = 3,
+                document_id: Optional[str] = None,
+            ) -> Any:
+                """Search and query the local MRPL sovereign document knowledge base using dense vector embeddings and cross-encoder reranking."""
+                params = {
+                    "operation": operation,
+                    "top_k": top_k,
+                    "top_n": top_n,
+                }
+                if document_id:
+                    params["document_id"] = document_id
+                inputs = {"query": query}
+                raw = self._execute_capability_with_tracking(
+                    capability_id="retrieval.rag",
+                    parameters=params,
+                    inputs=inputs,
+                    allowed_capabilities=allowed_capabilities,
+                    parent_context=parent_context,
+                )
+                if isinstance(raw, dict):
+                    if raw.get("answer"):
+                        return {"answer": raw["answer"]}
+                    if raw.get("candidates"):
+                        return [
+                            {
+                                "document": c.get("file_name") or c.get("document_id"),
+                                "content": c.get("content", "")[:350],
+                                "page": c.get("page_numbers"),
+                            }
+                            for c in raw["candidates"][:3]
+                        ]
+                return raw
+
+            tools.append(
+                Tool(
+                    retrieval_rag,
+                    name="retrieval_rag",
+                    description="Search and query the local MRPL sovereign document knowledge base (equipment specs, inspection reports, operating manuals) for grounded technical facts.",
+                )
+            )
+
+        # 7. vision.inspect
+        if "vision.inspect" in allowed_capabilities and self._registry.has("vision.inspect"):
+            def vision_inspect(
+                image_path: str,
+                query: Optional[str] = None,
+            ) -> Any:
+                """Inspect an engineering drawing, P&ID, or inspection image using multimodal vision."""
+                params = {}
+                inputs = {"image_path": image_path}
+                if query:
+                    inputs["query"] = query
+                raw = self._execute_capability_with_tracking(
+                    capability_id="vision.inspect",
+                    parameters=params,
+                    inputs=inputs,
+                    allowed_capabilities=allowed_capabilities,
+                    parent_context=parent_context,
+                )
+                if isinstance(raw, str) and len(raw) > 1200:
+                    return raw[:1200] + "... [truncated for brevity]"
+                return raw
+
+            tools.append(
+                Tool(
+                    vision_inspect,
+                    name="vision_inspect",
+                    description="Inspect and analyze engineering drawings, P&ID diagrams, symbols, and equipment tags from an image file.",
                 )
             )
 

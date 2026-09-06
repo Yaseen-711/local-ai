@@ -42,11 +42,14 @@ class CapabilityRegistry:
         if descriptor is not None:
             self._descriptors[cid] = descriptor
         elif cid not in self._descriptors:
-            # Create a default minimal descriptor
-            self._descriptors[cid] = CapabilityDescriptor(
-                capability_id=cid,
-                description=f"Capability {cid}",
-            )
+            if hasattr(capability, "get_descriptor") and callable(capability.get_descriptor):
+                self._descriptors[cid] = capability.get_descriptor()
+            else:
+                # Create a default minimal descriptor
+                self._descriptors[cid] = CapabilityDescriptor(
+                    capability_id=cid,
+                    description=f"Capability {cid}",
+                )
 
     def register_descriptor(self, descriptor: CapabilityDescriptor) -> None:
         """Register or update a descriptor for a capability.

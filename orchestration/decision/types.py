@@ -27,6 +27,7 @@ class DecisionResult:
     decision_type: ExecutionStrategy
     goal_id: str
     plan_id: Optional[str] = None
+    plan: Optional[Any] = None
     route_result: Optional[RouteResult] = None
     direct_result: Optional[DirectGoalResult] = None
     candidate_plan: Optional[CandidatePlan] = None

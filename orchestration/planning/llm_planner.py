@@ -68,11 +68,20 @@ class LLMPlanner(Planner):
             "1. Every task MUST reference a valid capability_id from the catalog.\n"
             "2. Dependencies must form a strict Directed Acyclic Graph (DAG) with no cycles.\n"
             "3. If a task uses an input_reference from another task in the plan, that task MUST be listed in dependencies.\n"
+            "4. When creating a formal executive summary, report, or deliverable, use 'artifact.generate' with artifact_type (e.g. docx).\n"
+            "5. For input_references to an upstream task, use key 'output' (e.g. {\"key\": \"output\", \"source_task_id\": \"t1\"}).\n"
+        )
+
+        inputs = (
+            context.goal.context.get("inputs", {})
+            if isinstance(getattr(context.goal, "context", None), dict)
+            else {}
         )
 
         user_content = {
             "goal_id": context.goal.goal_id,
             "goal_description": context.goal.description,
+            "inputs": inputs,
             "available_capabilities": capabilities_info,
         }
 
@@ -119,9 +128,14 @@ class LLMPlanner(Planner):
             refs_dict: Dict[str, DataReference] = {}
             for r in raw_refs:
                 if isinstance(r, dict):
-                    r_key = r.get("key", "input")
-                    refs_dict[r_key] = DataReference(
-                        key=r_key,
+                    logical_name = r.get("name") or r.get("key", "output")
+                    if logical_name in ("ref_key", "input", ""):
+                        logical_name = "output"
+                    source_key = r.get("source_key") or "output"
+                    if logical_name in ("candidates", "answer", "tags", "text", "content", "stdout"):
+                        source_key = logical_name
+                    refs_dict[logical_name] = DataReference(
+                        key=source_key,
                         source_task_id=r.get("source_task_id"),
                         uri=r.get("uri"),
                         mime_type=r.get("mime_type", "application/json"),
@@ -153,7 +167,7 @@ class LLMPlanner(Planner):
             title=title,
             tasks=candidate_tasks,
             dependencies=plan_dependencies,
-            metadata={"planner": "llm", "model_id": self._model_id},
+            metadata={"planner": "llm", "model_id": self._model_id, "inputs": inputs},
         )
 
     async def plan_async(self, context: PlanningContext) -> CandidatePlan:

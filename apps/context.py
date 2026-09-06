@@ -245,12 +245,34 @@ class AppContext:
         wf = workflow or self.create_code_repair_workflow()
         return CodeVerificationRepairCapability(workflow=wf)
 
+    def create_rag_harness(self, db_url: Optional[str] = None) -> Any:
+        """Create a RAGTestHarness targeting local_ai_rag database."""
+        import os
+        from rag.cli.harness import RAGTestHarness
+        from rag.storage.database import DatabaseConfig, DatabaseManager
+
+        target_url = db_url or os.getenv("RAG_DATABASE_URL")
+        config = DatabaseConfig(database="local_ai_rag", url=target_url) if target_url else DatabaseConfig(database="local_ai_rag")
+        db = DatabaseManager(config)
+        return RAGTestHarness(db_manager=db)
+
+    def create_rag_capability(
+        self,
+        harness: Optional[Any] = None,
+        db_url: Optional[str] = None,
+    ) -> Any:
+        """Create a RagRetrievalCapability wired to RAGTestHarness and InferenceConnector."""
+        from orchestration.capabilities.builtin.rag import RagRetrievalCapability
+
+        return RagRetrievalCapability(harness=harness, connector=self.inference)
+
     def create_base_capability_registry(self) -> Any:
         """Create a CapabilityRegistry with base capabilities registered (excluding agent)."""
         from orchestration.capabilities import CapabilityRegistry
         from orchestration.capabilities.builtin import (
             CodeVerificationRepairCapability,
             InferencePromptCapability,
+            RagRetrievalCapability,
             TextAnalysisCapability,
             VisionInspectionCapability,
         )
@@ -265,6 +287,7 @@ class AppContext:
         registry.register(self.create_workspace_coding_capability())
         registry.register(self.create_vision_inspection_capability())
         registry.register(self.create_code_repair_capability())
+        registry.register(self.create_rag_capability())
         return registry
 
     def create_agent_capability(
@@ -478,9 +501,59 @@ class AppContext:
                     ],
                 ),
                 RouteDefinition(
+                    name="rag_retrieval",
+                    strategy=ExecutionStrategy.DIRECT_CAPABILITY,
+                    target_capability_id="retrieval.rag",
+                    utterances=[
+                        "search knowledge base",
+                        "query technical specifications",
+                        "search equipment specs",
+                        "what is the design pressure",
+                        "operating manual search",
+                        "rag query",
+                        "what are the design pressure, normal operating pressure, and latest inspection condition",
+                        "what is the design pressure of fv-201a",
+                    ],
+                    metadata={
+                        "prefixes": ["search knowledge base", "query knowledge base", "rag:"],
+                        "patterns": [
+                            r"what is the (design|operating) pressure of (fv|hx|zx|p)-\w+",
+                            r"what are the design pressure",
+                            r"according to the (knowledge base|equipment specification)",
+                        ],
+                    },
+                ),
+                RouteDefinition(
+                    name="code_repair",
+                    strategy=ExecutionStrategy.DIRECT_CAPABILITY,
+                    target_capability_id="code.verify_and_repair",
+                    utterances=[
+                        "verify and repair code",
+                        "run tests and fix code",
+                        "auto-repair code",
+                        "generate and test code",
+                        "verify calculation with executable code",
+                    ],
+                    metadata={
+                        "prefixes": ["verify code", "repair code", "calculate and verify"],
+                        "patterns": [r"verify.*calculation with executable code"],
+                    },
+                ),
+                RouteDefinition(
                     name="complex_workflow",
                     strategy=ExecutionStrategy.PLAN_REQUIRED,
-                    utterances=["create report and summarize", "multi-step pipeline"],
+                    utterances=[
+                        "create report and summarize",
+                        "multi-step pipeline",
+                        "review p&id against knowledge base and create summary",
+                        "audit drawing and generate compliance report",
+                    ],
+                    metadata={
+                        "patterns": [
+                            r"review this p&id against the equipment information",
+                            r"audit.*against.*and generate",
+                        ],
+                    },
                 ),
                 RouteDefinition(
                     name="agent_execution",
@@ -490,7 +563,15 @@ class AppContext:
                         "run agent task",
                         "solve problem using agent tools",
                         "agent investigation",
+                        "identify tag in p&id and retrieve design pressure",
                     ],
+                    metadata={
+                        "prefixes": ["agent:", "run agent"],
+                        "patterns": [
+                            r"identify .* in this p&id and tell me its design pressure",
+                            r"identify .* in this p&id and retrieve",
+                        ],
+                    },
                 ),
             ]
 

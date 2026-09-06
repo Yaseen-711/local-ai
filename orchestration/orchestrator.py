@@ -124,7 +124,11 @@ class GoalOrchestrator:
 
         ctx = CapabilityContext(
             execution_id=f"dir-{goal.goal_id}",
-            metadata={"goal_id": goal.goal_id, "capability_id": capability_id},
+            metadata={
+                "goal_id": goal.goal_id,
+                "capability_id": capability_id,
+                "goal_description": goal.description,
+            },
         )
 
         try:
@@ -212,6 +216,10 @@ class GoalOrchestrator:
                 DRAFT or ACTIVE status, or plan.goal_id does not match goal.goal_id.
         """
         self._validate_goal_and_plan(goal, plan)
+
+        # Propagate goal inputs into plan if not already set
+        if hasattr(plan, "initial_inputs") and not plan.initial_inputs and isinstance(getattr(goal, "context", None), dict):
+            plan.initial_inputs = dict(goal.context.get("inputs", {}))
 
         # Bind goal to plan
         goal.activate(plan.plan_id)

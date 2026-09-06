@@ -119,7 +119,14 @@ class ArtifactGenerationCapability:
         raw_data = inputs.get("data") if "data" in inputs else parameters.get("data")
         data = _resolve_data_input(raw_data)
 
-        content = inputs.get("content") or parameters.get("content")
+        content = (
+            inputs.get("content")
+            or parameters.get("content")
+            or inputs.get("text")
+            or parameters.get("text")
+            or inputs.get("response")
+            or (inputs.get("output") if isinstance(inputs.get("output"), str) else None)
+        )
         title = str(parameters.get("title") or inputs.get("title") or "")
 
         request = ArtifactGenerationRequest(

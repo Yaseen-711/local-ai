@@ -108,8 +108,13 @@ class AgentCapability:
             is_available=self.is_available,
         )
 
-    def _extract_prompt(self, inputs: Dict[str, Any], parameters: Dict[str, Any]) -> str:
-        """Resolve prompt or objective string from inputs or parameters."""
+    def _extract_prompt(
+        self,
+        inputs: Dict[str, Any],
+        parameters: Dict[str, Any],
+        context: Optional[CapabilityContext] = None,
+    ) -> str:
+        """Resolve prompt or objective string from inputs, parameters, or context."""
         prompt = (
             inputs.get("prompt")
             or inputs.get("objective")
@@ -119,12 +124,52 @@ class AgentCapability:
             or parameters.get("objective")
             or parameters.get("text")
             or parameters.get("description")
+            or parameters.get("system_prompt")
+            or (context.metadata.get("goal_description") if context and context.metadata else None)
         )
+        if not prompt or not str(prompt).strip():
+            if inputs:
+                parts = []
+                for k, v in inputs.items():
+                    if isinstance(v, str) and v.strip():
+                        parts.append(f"{k}: {v.strip()}")
+                    elif isinstance(v, dict):
+                        parts.append(f"{k}: {json.dumps(v)[:1000]}")
+                if parts:
+                    prompt = "\n".join(parts)
+
         if not prompt or not str(prompt).strip():
             raise ValueError(
                 f"Capability '{self.capability_id}' requires a non-empty 'prompt' or 'objective' in inputs."
             )
-        return str(prompt).strip()
+
+        resolved_prompt = str(prompt).strip()
+
+        # Propagate image path if present
+        img_path = inputs.get("image_path") or parameters.get("image_path")
+        if img_path and str(img_path) not in resolved_prompt:
+            resolved_prompt = f"{resolved_prompt}\n\nAttached image file: {img_path}"
+
+        # Propagate upstream context if available
+        context_parts = []
+        for k, v in inputs.items():
+            if k not in ("image_path", "prompt", "text", "objective", "description"):
+                if isinstance(v, dict):
+                    val_str = v.get("answer") or v.get("output") or v.get("summary") or v.get("response")
+                    if not val_str:
+                        if "candidates" in v and isinstance(v["candidates"], list) and v["candidates"]:
+                            val_str = "\n".join(c.get("content", "")[:300] for c in v["candidates"][:2])
+                        else:
+                            val_str = json.dumps(v)[:500]
+                elif isinstance(v, list):
+                    val_str = json.dumps(v)[:500]
+                else:
+                    val_str = str(v)[:500]
+                context_parts.append(f"Input '{k}': {val_str}")
+        if context_parts:
+            resolved_prompt = f"{resolved_prompt}\n\n" + "\n\n".join(context_parts)
+
+        return resolved_prompt
 
     def _extract_proposal_if_present(self, response_text: str) -> Optional[Dict[str, Any]]:
         """Extract structured advisory replan proposal if present in agent output."""
@@ -160,7 +205,7 @@ class AgentCapability:
 
         # 1. Parse parameters & inputs
         agent_params = AgentParameters.from_dict(parameters)
-        prompt = self._extract_prompt(inputs, parameters)
+        prompt = self._extract_prompt(inputs, parameters, context)
 
         # 2. Check early cancellation
         if context.metadata.get("cancelled", False):
@@ -181,6 +226,16 @@ class AgentCapability:
         # 4. Build tools and reset adapter state
         self._tool_adapter.reset_state()
         allowed_set = set(agent_params.allowed_capabilities)
+        if not allowed_set:
+            if context.metadata.get("plan_id"):
+                # Inside a multi-task plan DAG, avoid context window saturation
+                # by only equipping tools explicitly listed in task parameters.
+                allowed_set = set()
+            else:
+                allowed_set = {
+                    cid for cid in self._tool_adapter._registry.list_capabilities()
+                    if cid != self.capability_id
+                }
         tools = self._tool_adapter.build_tools(
             allowed_capabilities=allowed_set,
             parent_context=context,

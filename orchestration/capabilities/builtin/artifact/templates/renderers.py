@@ -846,6 +846,7 @@ SUPPORTED_TEMPLATES = {
     "technical_approval_note": ArtifactFormat.DOCX,
     "calculation_workbook": ArtifactFormat.XLSX,
     "engineering_calculation": ArtifactFormat.XLSX,
+    "engineering_calculation_workbook": ArtifactFormat.XLSX,
     "executive_presentation": ArtifactFormat.PPTX,
     "board_summary": ArtifactFormat.PPTX,
 }
@@ -891,7 +892,7 @@ def render_template(
         render_docx_approval_note(spec, output_path)
 
     # 2. XLSX Engineering Calculation Workbook
-    elif norm_name in ("calculation_workbook", "engineering_calculation"):
+    elif norm_name in ("calculation_workbook", "engineering_calculation", "engineering_calculation_workbook"):
         if isinstance(template_data, EngineeringCalculationSpec):
             calc_spec = template_data
         elif isinstance(template_data, dict):

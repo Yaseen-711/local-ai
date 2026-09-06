@@ -268,7 +268,16 @@ class InProcessPlanRunner:
 
         # 2. Input translation & execution within safety boundary
         parameters = dict(task.parameters)
-        context = CapabilityContext(execution_id=attempt.attempt_id)
+        context = CapabilityContext(
+            execution_id=attempt.attempt_id,
+            metadata={
+                "plan_id": plan.plan_id,
+                "goal_id": plan.goal_id,
+                "task_id": task.task_id,
+                "task_title": task.title,
+                "task_description": task.description,
+            },
+        )
 
         try:
             inputs = self._resolve_inputs(task, plan)
@@ -305,7 +314,7 @@ class InProcessPlanRunner:
             ValueError: If an upstream task does not exist, has no result,
                 or if a reference is unresolvable.
         """
-        resolved: Dict[str, Any] = {}
+        resolved: Dict[str, Any] = dict(getattr(plan, "initial_inputs", {}))
         for logical_name, ref in task.input_references.items():
             if ref.source_task_id is not None:
                 source_task = plan.tasks.get(ref.source_task_id)
@@ -320,18 +329,20 @@ class InProcessPlanRunner:
                         f"upstream task '{ref.source_task_id}' has no result (status: '{source_task.status.value}')."
                     )
                 source_output = source_task.result.output
-                # If output is a dict and contains the referenced key, extract it
-                if isinstance(source_output, dict) and ref.key in source_output:
-                    resolved[logical_name] = source_output[ref.key]
-                elif hasattr(source_output, ref.key):
-                    resolved[logical_name] = getattr(source_output, ref.key)
-                elif ref.key == "output":
-                    resolved[logical_name] = source_output
+                if isinstance(source_output, dict):
+                    if ref.key in source_output:
+                        resolved[logical_name] = source_output[ref.key]
+                    elif hasattr(source_output, ref.key):
+                        resolved[logical_name] = getattr(source_output, ref.key)
+                    elif ref.key in ("output", "result", "data"):
+                        resolved[logical_name] = source_output
+                    else:
+                        raise ValueError(
+                            f"Cannot resolve input reference '{logical_name}' for task '{task.task_id}': "
+                            f"key '{ref.key}' not found in output of upstream task '{ref.source_task_id}'."
+                        )
                 else:
-                    raise ValueError(
-                        f"Cannot resolve input reference '{logical_name}' for task '{task.task_id}': "
-                        f"key '{ref.key}' not found in output of upstream task '{ref.source_task_id}'."
-                    )
+                    resolved[logical_name] = source_output
             elif ref.uri is not None:
                 resolved[logical_name] = ref.uri
             else:

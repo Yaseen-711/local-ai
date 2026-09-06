@@ -14,6 +14,7 @@ from apps.api.routers import (
     direct_router,
     files_router,
     goals_router,
+    rag_router,
     telemetry_router,
 )
 from apps.api.schemas.common import ProblemDetail
@@ -211,6 +212,7 @@ def create_app(app_context: Optional[AppContext] = None) -> FastAPI:
     app.include_router(direct_router, prefix=api_v1_prefix)
     app.include_router(goals_router, prefix=api_v1_prefix)
     app.include_router(artifacts_router, prefix=api_v1_prefix)
+    app.include_router(rag_router, prefix=api_v1_prefix)
     app.include_router(telemetry_router, prefix=api_v1_prefix)
 
     return app

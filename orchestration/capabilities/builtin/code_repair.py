@@ -71,8 +71,12 @@ class CodeVerificationRepairCapability:
         prompt = str(
             inputs.get("prompt")
             or inputs.get("specification")
+            or inputs.get("text")
+            or inputs.get("description")
             or parameters.get("prompt")
             or parameters.get("specification")
+            or parameters.get("description")
+            or (next(iter(inputs.values())) if inputs else "")
             or ""
         ).strip()
 

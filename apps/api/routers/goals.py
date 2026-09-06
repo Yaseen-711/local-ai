@@ -226,23 +226,44 @@ async def _run_execution_background(
             data={"goal_id": goal_id, "status": "active"},
         )
 
-        decision_engine = context.create_decision_engine()
-        # Execute through decision engine
-        decision_result = await decision_engine.process_goal_async(goal, execute=True)
+        # Check if plan already exists for this goal (e.g. from decide step)
+        if goal.active_plan_id and goal.active_plan_id in _IN_MEMORY_PLANS:
+            plan = _IN_MEMORY_PLANS[goal.active_plan_id]
+            orchestrator = context.create_goal_orchestrator()
+            await orchestrator.execute_goal_async(goal, plan)
+            _IN_MEMORY_PLANS[plan.plan_id] = plan
+        else:
+            decision_engine = context.create_decision_engine()
+            # Execute through decision engine
+            decision_result = await decision_engine.process_goal_async(goal, execute=True)
+            _IN_MEMORY_DECISIONS[goal_id] = decision_result
 
-        _IN_MEMORY_DECISIONS[goal_id] = decision_result
-
-        if decision_result.candidate_plan:
-            domain_plan = decision_result.candidate_plan.to_plan()
-            _IN_MEMORY_PLANS[domain_plan.plan_id] = domain_plan
-            if not goal.active_plan_id:
+            if getattr(decision_result, "plan", None):
+                domain_plan = decision_result.plan
+                _IN_MEMORY_PLANS[domain_plan.plan_id] = domain_plan
                 goal.active_plan_id = domain_plan.plan_id
+            elif decision_result.candidate_plan:
+                domain_plan = decision_result.candidate_plan.to_plan()
+                _IN_MEMORY_PLANS[domain_plan.plan_id] = domain_plan
+                if not goal.active_plan_id:
+                    goal.active_plan_id = domain_plan.plan_id
 
-        if decision_result.direct_result and decision_result.direct_result.result:
-            from apps.api.routers.artifacts import register_artifact
-            for art in decision_result.direct_result.result.artifacts:
-                if art.uri and art.uri.startswith("file://"):
-                    register_artifact(art.artifact_id, Path(art.uri.replace("file://", "")))
+        # Register any artifacts produced across plan tasks or direct results
+        from apps.api.routers.artifacts import register_artifact
+        active_plan = _IN_MEMORY_PLANS.get(goal.active_plan_id) if goal.active_plan_id else None
+        if active_plan:
+            for task in active_plan.tasks.values():
+                if task.result and task.result.artifacts:
+                    for art in task.result.artifacts:
+                        if art.uri and art.uri.startswith("file://"):
+                            register_artifact(art.artifact_id, Path(art.uri.replace("file://", "")))
+
+        if goal_id in _IN_MEMORY_DECISIONS:
+            dec = _IN_MEMORY_DECISIONS[goal_id]
+            if dec.direct_result and dec.direct_result.result:
+                for art in dec.direct_result.result.artifacts:
+                    if art.uri and art.uri.startswith("file://"):
+                        register_artifact(art.artifact_id, Path(art.uri.replace("file://", "")))
 
         _save_goal(goal, context)
 
@@ -265,7 +286,11 @@ async def _run_execution_background(
                 data={
                     "goal_id": goal_id,
                     "status": "failed",
-                    "error": decision_result.error or "Goal execution failed",
+                    "error": (
+                        _IN_MEMORY_DECISIONS[goal_id].error
+                        if goal_id in _IN_MEMORY_DECISIONS and _IN_MEMORY_DECISIONS[goal_id].error
+                        else "Goal execution failed"
+                    ),
                 },
             )
 
@@ -296,8 +321,8 @@ async def execute_goal(
             detail=f"Cannot execute goal '{goal_id}': status is '{goal.status.value}', expected 'pending'.",
         )
 
-    # Launch execution in background
-    asyncio.create_task(_run_execution_background(goal, context, event_bus))
+    # Launch execution via background tasks
+    background_tasks.add_task(_run_execution_background, goal, context, event_bus)
 
     return GoalExecutionResponse(
         goal_id=goal.goal_id,

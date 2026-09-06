@@ -6,6 +6,7 @@ from orchestration.capabilities.builtin.code import WorkspaceCodingCapability
 from orchestration.capabilities.builtin.code_repair import CodeVerificationRepairCapability
 from orchestration.capabilities.builtin.document import DocumentUnderstandingCapability
 from orchestration.capabilities.builtin.inference import InferencePromptCapability
+from orchestration.capabilities.builtin.rag import RagRetrievalCapability
 from orchestration.capabilities.builtin.vision import VisionInspectionCapability
 from orchestration.capabilities.builtin.workflow import TextAnalysisCapability
 
@@ -15,6 +16,7 @@ __all__ = [
     "CodeVerificationRepairCapability",
     "DocumentUnderstandingCapability",
     "InferencePromptCapability",
+    "RagRetrievalCapability",
     "TextAnalysisCapability",
     "VisionInspectionCapability",
     "WorkspaceCodingCapability",

@@ -58,4 +58,5 @@ artifacts/*
 # Temporary runtime staging & scratch
 .staging/
 scratch/
+.workspaces/
 

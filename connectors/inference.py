@@ -4,7 +4,7 @@ This module provides the capability integration boundary between higher-level
 orchestration/workflow layers and model inference infrastructure.
 """
 
-from typing import Optional, Protocol, runtime_checkable
+from typing import Any, Optional, Protocol, runtime_checkable
 
 from core.foundation import FoundationCore
 from core.inference.types import (
@@ -71,27 +71,47 @@ class FoundationInferenceConnector:
 
     def infer_prompt(
         self,
-        model_id: str,
-        prompt: str,
+        model_id: Optional[str] = None,
+        prompt: Optional[str] = None,
         system_prompt: Optional[str] = None,
         options: Optional[GenerationOptions] = None,
         request_id: Optional[str] = None,
+        **kwargs: Any,
     ) -> InferenceResponse:
         """Execute single-turn prompt inference via FoundationCore.
         
         Args:
-            model_id: Target model identifier or alias.
+            model_id: Target model identifier or alias (defaults to 'default').
             prompt: User prompt content.
             system_prompt: Optional system instructions.
             options: Optional generation parameters.
             request_id: Optional tracking identifier.
+            **kwargs: Flexible keyword arguments (temperature, max_tokens, etc.).
             
         Returns:
             Normalized inference response.
         """
+        # Handle flexible calling conventions
+        if model_id is not None and prompt is None and "prompt" not in kwargs:
+            prompt = model_id
+            target_model = "default"
+        else:
+            target_model = model_id or kwargs.pop("model_id", "default")
+
+        target_prompt = prompt if prompt is not None else kwargs.pop("prompt", "")
+
+        if options is None:
+            temp = kwargs.pop("temperature", None)
+            max_tok = kwargs.pop("max_tokens", None)
+            if temp is not None or max_tok is not None:
+                options = GenerationOptions(
+                    temperature=float(temp) if temp is not None else 0.7,
+                    max_tokens=int(max_tok) if max_tok is not None else 1024,
+                )
+
         return self._core.infer_prompt(
-            model_id=model_id,
-            prompt=prompt,
+            model_id=target_model,
+            prompt=target_prompt,
             system_prompt=system_prompt,
             options=options,
             request_id=request_id,
