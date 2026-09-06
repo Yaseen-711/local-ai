@@ -153,6 +153,14 @@ class StandardDocumentNormalizer(DocumentNormalizer):
         # Reconstruct synthesized full text from normalized elements
         synthesized_text = "\n\n".join(elem.content for elem in normalized_elements if elem.content)
 
+        # Discover document title from elements if not already present
+        doc_title: Optional[str] = document.metadata.get("title")
+        if not doc_title:
+            for elem in normalized_elements:
+                if elem.element_type == NormalizedElementType.TITLE and elem.content.strip():
+                    doc_title = elem.content.strip()
+                    break
+
         # Retain document metadata with normalization records
         combined_metadata = {
             **document.metadata,
@@ -160,6 +168,13 @@ class StandardDocumentNormalizer(DocumentNormalizer):
             "normalized_element_count": len(normalized_elements),
             "raw_element_count": len(document.elements),
         }
+        if doc_title and "title" not in combined_metadata:
+            combined_metadata["title"] = doc_title
+        if document.file_path and "source_path" not in combined_metadata:
+            combined_metadata["source_path"] = str(document.file_path)
+        if document.format and "format" not in combined_metadata:
+            combined_metadata["format"] = document.format
+
 
         return NormalizedDocument(
             document_id=document.id,

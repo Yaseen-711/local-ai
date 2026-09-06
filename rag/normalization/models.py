@@ -99,12 +99,25 @@ class NormalizedDocument:
         return [elem for elem in self.elements if elem.element_type == NormalizedElementType.LIST_ITEM]
 
     @property
+    def title(self) -> Optional[str]:
+        """Return the document title if available from metadata or title elements."""
+        if "title" in self.metadata and self.metadata["title"]:
+            return self.metadata["title"]
+        for elem in self.elements:
+            if elem.element_type == NormalizedElementType.TITLE and elem.content.strip():
+                return elem.content.strip()
+        return None
+
+    @property
     def page_count(self) -> int:
         """Calculate total page count based on page numbers observed in elements, or metadata."""
         pages = {elem.page_number for elem in self.elements if elem.page_number is not None}
+        meta_pages = self.metadata.get("page_count", 1)
         if pages:
-            return max(pages)
-        return self.metadata.get("page_count", 1)
+            return max(max(pages), meta_pages)
+        return meta_pages
+
+
 
     def to_domain_document(self) -> Document:
         """Convert this normalized representation into a domain Document."""

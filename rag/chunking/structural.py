@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from rag.chunking.interfaces import DocumentChunker
 from rag.chunking.options import ChunkingOptions, FallbackSplitStrategy
 from rag.domain.models import Chunk
+from rag.metadata.models import ChunkMetadata
 from rag.normalization.models import (
     NormalizedDocument,
     NormalizedElement,
@@ -326,34 +327,26 @@ class StructuralChunker(DocumentChunker):
             chunk_idx = len(chunks)
             chunk_id = f"{document.document_id}_chk_{chunk_idx:04d}"
 
-            elem_indices = [e.index for e in elements_to_emit]
-            elem_types = list(
-                dict.fromkeys(e.element_type.value for e in elements_to_emit)
+            doc_title = getattr(document, "title", None) or document.metadata.get("title")
+
+            chunk_meta = ChunkMetadata.build(
+                chunk_id=chunk_id,
+                document_id=document.document_id,
+                chunk_index=chunk_idx,
+                elements=elements_to_emit,
+                heading=heading_for_chunk,
+                heading_path=heading_path,
+                source_path=str(document.file_path) if document.file_path else document.metadata.get("source_path"),
+                format=document.format or document.metadata.get("format", ""),
+                document_title=doc_title,
+                is_split=bool(extra_meta and extra_meta.get("is_split")),
+                split_part=extra_meta.get("split_part") if extra_meta else None,
+                total_parts=extra_meta.get("total_parts") if extra_meta else None,
+                extra_meta=extra_meta,
             )
-            page_numbers = sorted(
-                list({e.page_number for e in elements_to_emit if e.page_number is not None})
-            )
 
-            metadata: Dict[str, Any] = {
-                "chunk_index": chunk_idx,
-                "document_id": document.document_id,
-                "heading": heading_for_chunk,
-                "heading_path": heading_path,
-                "element_indices": elem_indices,
-                "element_types": elem_types,
-                "page_numbers": page_numbers,
-            }
-
-            if document.format:
-                metadata["format"] = document.format
-            if document.file_path:
-                metadata["source_path"] = str(document.file_path)
-
-            if extra_meta:
-                metadata.update(extra_meta)
-
-            is_table = bool(extra_meta and extra_meta.get("is_table"))
-            is_split = bool(extra_meta and extra_meta.get("is_split"))
+            is_table = chunk_meta.is_table
+            is_split = chunk_meta.is_split
 
             # Check min_chunk_size merge with previous chunk under exact same heading
             if (
@@ -367,31 +360,14 @@ class StructuralChunker(DocumentChunker):
                 and (len(chunks[-1].content) + len("\n\n") + len(body_text) <= self.options.max_chunk_size)
             ):
                 prev = chunks[-1]
+                prev_meta = ChunkMetadata.from_dict(prev.metadata)
+                merged_meta = prev_meta.merge_elements(elements_to_emit, extra_meta=extra_meta)
                 merged_content = prev.content + "\n\n" + body_text
-                merged_indices = prev.metadata.get("element_indices", []) + elem_indices
-                merged_types = list(
-                    dict.fromkeys(
-                        prev.metadata.get("element_types", []) + elem_types
-                    )
-                )
-                merged_pages = sorted(
-                    list(
-                        set(
-                            prev.metadata.get("page_numbers", []) + page_numbers
-                        )
-                    )
-                )
-                merged_meta = {
-                    **prev.metadata,
-                    "element_indices": merged_indices,
-                    "element_types": merged_types,
-                    "page_numbers": merged_pages,
-                }
                 chunks[-1] = Chunk(
                     id=prev.id,
                     document_id=prev.document_id,
                     content=merged_content,
-                    metadata=merged_meta,
+                    metadata=merged_meta.to_dict(),
                 )
                 return
 
@@ -400,7 +376,7 @@ class StructuralChunker(DocumentChunker):
                     id=chunk_id,
                     document_id=document.document_id,
                     content=final_content,
-                    metadata=metadata,
+                    metadata=chunk_meta.to_dict(),
                 )
             )
 
