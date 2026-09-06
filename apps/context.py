@@ -215,8 +215,8 @@ class AppContext:
         )
 
 
-    def create_capability_registry(self) -> Any:
-        """Create a standard CapabilityRegistry with all built-in capabilities registered."""
+    def create_base_capability_registry(self) -> Any:
+        """Create a CapabilityRegistry with base capabilities registered (excluding agent)."""
         from orchestration.capabilities import CapabilityRegistry
         from orchestration.capabilities.builtin import (
             InferencePromptCapability,
@@ -231,6 +231,54 @@ class AppContext:
         registry.register(self.create_document_understanding_capability())
         registry.register(self.create_artifact_generation_capability())
         registry.register(self.create_workspace_coding_capability())
+        return registry
+
+    def create_agent_capability(
+        self,
+        registry: Optional[Any] = None,
+        model_tier: Optional[Any] = None,
+    ) -> Any:
+        """Create an AgentCapability wired to FoundationInferenceConnector and capability tools."""
+        from orchestration.capabilities.builtin.agent import (
+            AgentCapability,
+            AgentExecutionPolicy,
+            CapabilityToolAdapter,
+            FoundationPydanticAIModel,
+        )
+        from orchestration.routing import ModelSelectionPolicy
+        from orchestration.routing.types import ModelTier
+
+        target_registry = registry or self.create_base_capability_registry()
+        reg = getattr(self.core, "registry", getattr(self.core, "model_registry", None))
+        model_policy = ModelSelectionPolicy(registry=reg)
+        model_adapter = FoundationPydanticAIModel(
+            connector=self.inference,
+            model_policy=model_policy,
+            default_tier=model_tier or ModelTier.REASONING,
+        )
+        auth_policy = AgentExecutionPolicy()
+        tool_adapter = CapabilityToolAdapter(
+            registry=target_registry,
+            policy=auth_policy,
+        )
+        return AgentCapability(
+            model_adapter=model_adapter,
+            tool_adapter=tool_adapter,
+            policy=auth_policy,
+        )
+
+    def create_capability_registry(self) -> Any:
+        """Create a standard CapabilityRegistry with all built-in capabilities registered.
+
+        Follows strict acyclic construction order:
+          1. Base capabilities constructed and registered into registry.
+          2. AgentExecutionPolicy and CapabilityToolAdapter constructed against populated registry.
+          3. AgentCapability constructed with model adapter, tool adapter, and policy.
+          4. AgentCapability registered into the registry as 'agent.pydantic_ai'.
+        """
+        registry = self.create_base_capability_registry()
+        agent_cap = self.create_agent_capability(registry=registry)
+        registry.register(agent_cap)
         return registry
 
     # ------------------------------------------------------------------ #
@@ -387,11 +435,22 @@ class AppContext:
                     strategy=ExecutionStrategy.PLAN_REQUIRED,
                     utterances=["create report and summarize", "multi-step pipeline"],
                 ),
+                RouteDefinition(
+                    name="agent_execution",
+                    strategy=ExecutionStrategy.DIRECT_CAPABILITY,
+                    target_capability_id="agent.pydantic_ai",
+                    utterances=[
+                        "run agent task",
+                        "solve problem using agent tools",
+                        "agent investigation",
+                    ],
+                ),
             ]
 
         llm_classifier = None
         if enable_llm:
-            model_policy = policy or ModelSelectionPolicy(registry=self.core.model_registry)
+            reg = getattr(self.core, "registry", getattr(self.core, "model_registry", None))
+            model_policy = policy or ModelSelectionPolicy(registry=reg)
             llm_classifier = LLMIntentClassifier(
                 connector=self.inference,
                 routes=routes,

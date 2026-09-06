@@ -161,3 +161,62 @@ def test_live_text_analysis_workflow_detailed():
     assert result.metadata["total_inference_latency_ms"] > 0
     assert "extraction" in result.metadata["phase_inference_latencies_ms"]
     assert "synthesis" in result.metadata["phase_inference_latencies_ms"]
+
+
+@pytest.mark.integration
+def test_live_agent_multi_turn_tool_use_both_tiers():
+    """Verify live agent multi-turn tool calling across both model tiers against llama-server."""
+    from apps.context import AppContext
+    from orchestration.capabilities.base import CapabilityContext
+
+    repo_root = Path(__file__).parent.parent.parent.resolve()
+    core = FoundationCore.create(repo_root=repo_root)
+
+    provider = core.provider_manager.get_provider("llama_cpp")
+    if provider.check_health() != RuntimeState.READY:
+        pytest.skip("llama-server is not running")
+
+    model_9b = core.registry.get_model("qwen3.5-9b")
+    model_08b = core.registry.get_model("qwen3.5-0.8b")
+    if not provider.is_model_loaded(model_9b) or not provider.is_model_loaded(model_08b):
+        pytest.skip("Both qwen3.5-9b and qwen3.5-0.8b must be loaded in llama-server router mode.")
+
+    connector = FoundationInferenceConnector(core=core)
+    app_ctx = AppContext(core=core, inference=connector)
+    registry = app_ctx.create_capability_registry()
+    agent_cap = registry.get("agent.pydantic_ai")
+
+    # 1. Test REASONING tier (qwen3.5-9b)
+    res_reasoning = agent_cap.execute(
+        parameters={
+            "allowed_capabilities": ["workflow.text_analysis"],
+            "model_tier": "reasoning",
+        },
+        inputs={
+            "prompt": "Analyze the following text using text_analysis tool: The quarterly revenue was 50 million dollars with 10 million profit.",
+        },
+        context=CapabilityContext(execution_id="live-agent-reasoning"),
+    )
+    assert res_reasoning.output["finish_reason"] == "stop"
+    assert len(res_reasoning.output["tool_calls"]) >= 1
+    assert res_reasoning.output["tool_calls"][0]["tool_name"] == "workflow.text_analysis"
+    assert res_reasoning.output["tool_calls"][0]["success"] is True
+    assert len(res_reasoning.output["response"].strip()) > 0
+
+    # 2. Test LIGHTWEIGHT tier (qwen3.5-0.8b)
+    res_light = agent_cap.execute(
+        parameters={
+            "allowed_capabilities": ["workflow.text_analysis"],
+            "model_tier": "lightweight",
+        },
+        inputs={
+            "prompt": "Analyze the following text using text_analysis tool: The quarterly revenue was 50 million dollars with 10 million profit.",
+        },
+        context=CapabilityContext(execution_id="live-agent-lightweight"),
+    )
+    assert res_light.output["finish_reason"] == "stop"
+    assert len(res_light.output["tool_calls"]) >= 1
+    assert res_light.output["tool_calls"][0]["tool_name"] == "workflow.text_analysis"
+    assert res_light.output["tool_calls"][0]["success"] is True
+    assert len(res_light.output["response"].strip()) > 0
+

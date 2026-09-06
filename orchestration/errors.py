@@ -35,3 +35,8 @@ class CapabilityNotFoundError(CapabilityError):
 class CapabilityRegistryError(CapabilityError):
     """Raised when a capability cannot be registered (e.g. duplicate ID)."""
     pass
+
+
+class CapabilityUnavailableError(CapabilityError):
+    """Raised when a requested capability is unavailable in the runtime environment."""
+    pass
