@@ -58,6 +58,15 @@ class DoclingDocumentIngester(DocumentIngester):
         if self._converter is not None:
             return self._converter
 
+        from rag.offline import (
+            ensure_offline_environment,
+            get_expected_model_path,
+            is_offline_mode,
+            OfflineModelNotFoundError,
+        )
+
+        ensure_offline_environment()
+
         try:
             from docling.datamodel.base_models import InputFormat
             from docling.datamodel.pipeline_options import PdfPipelineOptions
@@ -65,6 +74,8 @@ class DoclingDocumentIngester(DocumentIngester):
 
             pipeline_options = PdfPipelineOptions()
             pipeline_options.do_ocr = self.do_ocr
+            # Explicitly disable remote parsing / remote OCR services to guarantee offline safety
+            pipeline_options.enable_remote_services = False
 
             self._converter = DocumentConverter(
                 format_options={
@@ -73,6 +84,15 @@ class DoclingDocumentIngester(DocumentIngester):
             )
             return self._converter
         except Exception as exc:
+            if is_offline_mode() and any(
+                term in str(exc).lower() for term in ("connect", "offline", "network", "download", "http")
+            ):
+                raise OfflineModelNotFoundError(
+                    model_name="docling-project/docling-models",
+                    component="DoclingDocumentIngester",
+                    expected_location=str(get_expected_model_path("docling-project/docling-models")),
+                    details=str(exc),
+                ) from exc
             raise DocumentParsingError(
                 f"Failed to initialize Docling DocumentConverter: {exc}"
             ) from exc

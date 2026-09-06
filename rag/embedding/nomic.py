@@ -72,6 +72,26 @@ class NomicEmbeddingModel(EmbeddingModel, Embedder):
         if self._custom_backend is not None:
             return self._custom_backend
         if self._loaded_model is None:
+            from rag.offline import (
+                ensure_offline_environment,
+                get_expected_model_path,
+                is_model_available_locally,
+                is_offline_mode,
+                OfflineModelNotFoundError,
+            )
+
+            ensure_offline_environment()
+            offline_active = is_offline_mode()
+            expected_location = get_expected_model_path(self._model_name)
+
+            # Strict fail-closed: verify model exists locally before invoking loader
+            if offline_active and not is_model_available_locally(self._model_name):
+                raise OfflineModelNotFoundError(
+                    model_name=self._model_name,
+                    component="NomicEmbeddingModel",
+                    expected_location=str(expected_location),
+                )
+
             try:
                 from sentence_transformers import SentenceTransformer
 
@@ -79,12 +99,22 @@ class NomicEmbeddingModel(EmbeddingModel, Embedder):
                     self._model_name,
                     device=self.device,
                     trust_remote_code=True,
+                    local_files_only=offline_active,
                 )
             except ImportError as exc:
                 raise ImportError(
                     f"The 'sentence-transformers' package is required to load {self._model_name}. "
                     "Install it or supply a custom backend callable."
                 ) from exc
+            except Exception as exc:
+                if offline_active:
+                    raise OfflineModelNotFoundError(
+                        model_name=self._model_name,
+                        component="NomicEmbeddingModel",
+                        expected_location=str(expected_location),
+                        details=str(exc),
+                    ) from exc
+                raise
         return self._loaded_model
 
     def _encode(self, formatted_texts: List[str]) -> List[List[float]]:

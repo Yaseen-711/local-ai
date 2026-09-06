@@ -365,6 +365,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     """CLI entry point supporting arguments and interactive loop."""
+    from rag.offline import ensure_offline_environment
+
+    ensure_offline_environment()
+
     parser = build_arg_parser()
     args = parser.parse_args()
 

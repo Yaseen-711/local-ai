@@ -141,6 +141,11 @@ class RAGTestHarness:
         self.retriever = retriever or PgVectorRetriever(self.db)
         self.reranker = reranker or CrossEncoderReranker(RerankerConfig())
 
+        # Enforce zero-network runtime configuration
+        from rag.offline import ensure_offline_environment
+
+        ensure_offline_environment()
+
         # Ensure database tables exist
         self.db.init_db()
 
