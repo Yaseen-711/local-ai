@@ -6,7 +6,16 @@ from typing import Dict, List, Optional, Union
 
 from core.common.errors import ConfigurationError
 from core.common.types import ModelFormat, ModelRole
-from core.config.settings import FoundationSettings, LlamaCppProviderSettings, Settings
+from core.config.settings import (
+    ArtifactSettings,
+    DatabaseSettings,
+    DocumentSettings,
+    FoundationSettings,
+    LlamaCppProviderSettings,
+    Settings,
+    WorkspaceSettings,
+)
+
 from core.models.schema import ModelCapabilities, ModelDefinition
 
 
@@ -174,4 +183,48 @@ def load_settings(settings_path: Union[str, Path]) -> Settings:
         default_alias=str(llama_data.get("default_alias", "qwen3.5-9b")),
     )
 
-    return Settings(foundation=foundation_settings, llama_cpp=llama_settings)
+    db_data = data.get("database", {})
+    database_settings = DatabaseSettings(
+        url=str(db_data.get("url", "postgresql+psycopg://postgres:postgres@localhost:5432/local_ai")),
+        pool_size=int(db_data.get("pool_size", 5)),
+        max_overflow=int(db_data.get("max_overflow", 10)),
+        echo=bool(db_data.get("echo", False)),
+    )
+
+    doc_data = data.get("document", {})
+    document_settings = DocumentSettings(
+        default_parser=str(doc_data.get("default_parser", "docling")),
+        enable_ocr=bool(doc_data.get("enable_ocr", True)),
+        ocr_engine=str(doc_data.get("ocr_engine", "rapidocr")),
+        enable_tables=bool(doc_data.get("enable_tables", True)),
+        enable_figures=bool(doc_data.get("enable_figures", True)),
+        enable_formulae=bool(doc_data.get("enable_formulae", True)),
+    )
+
+    art_data = data.get("artifact", {})
+    artifact_settings = ArtifactSettings(
+        output_dir=str(art_data.get("output_dir", "artifacts")),
+        enable_xlsx=bool(art_data.get("enable_xlsx", True)),
+        enable_docx=bool(art_data.get("enable_docx", True)),
+        enable_pdf=bool(art_data.get("enable_pdf", True)),
+    )
+
+    ws_data = data.get("workspace", {})
+    workspace_settings = WorkspaceSettings(
+        default_executor=str(ws_data.get("default_executor", "docker")),
+        docker_image=str(ws_data.get("docker_image", "python:3.12-slim")),
+        cpu_limit=float(ws_data.get("cpu_limit", 2.0)),
+        mem_limit=str(ws_data.get("mem_limit", "2g")),
+        network_mode=str(ws_data.get("network_mode", "none")),
+        default_timeout_seconds=float(ws_data.get("default_timeout_seconds", 60.0)),
+        base_workspaces_dir=str(ws_data.get("base_workspaces_dir", ".workspaces")),
+    )
+
+    return Settings(
+        foundation=foundation_settings,
+        llama_cpp=llama_settings,
+        database=database_settings,
+        document=document_settings,
+        artifact=artifact_settings,
+        workspace=workspace_settings,
+    )

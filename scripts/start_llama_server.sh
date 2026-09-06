@@ -4,16 +4,16 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-MODEL="$ROOT/models/gguf/Qwen3.5-9B-Q4_K_M.gguf"
+PRESET_CONFIG="$ROOT/configs/llama_models.ini"
 LLAMA_SERVER="$ROOT/adapters/llama_cpp/build/bin/llama-server"
 
 HOST="127.0.0.1"
 PORT="8080"
-MODEL_ALIAS="qwen3.5-9b"
+MODELS_MAX="2"
 
-if [ ! -f "$MODEL" ]; then
-    echo "ERROR: Model not found:"
-    echo "  $MODEL"
+if [ ! -f "$PRESET_CONFIG" ]; then
+    echo "ERROR: Presets config not found:"
+    echo "  $PRESET_CONFIG"
     exit 1
 fi
 
@@ -26,22 +26,17 @@ if [ ! -x "$LLAMA_SERVER" ]; then
     exit 1
 fi
 
-echo "Starting llama-server..."
-echo "Model: $MODEL_ALIAS"
-echo "Host:  $HOST"
-echo "Port:  $PORT"
+echo "Starting llama-server in router mode..."
+echo "Presets:    $PRESET_CONFIG"
+echo "Models Max: $MODELS_MAX"
+echo "Host:       $HOST"
+echo "Port:       $PORT"
 echo
 
+cd "$ROOT"
+
 exec "$LLAMA_SERVER" \
-    --model "$MODEL" \
-    --alias "$MODEL_ALIAS" \
+    --models-preset "$PRESET_CONFIG" \
+    --models-max "$MODELS_MAX" \
     --host "$HOST" \
-    --port "$PORT" \
-    --gpu-layers auto \
-    --ctx-size 4096 \
-    --cache-type-k q8_0 \
-    --cache-type-v q8_0 \
-    --batch-size 512 \
-    --ubatch-size 256 \
-    --no-warmup \
-    --reasoning off
+    --port "$PORT"

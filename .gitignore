@@ -46,3 +46,16 @@ models/**/*.onnx
 *.swp
 *.swo
 *~
+
+# Project Reports
+local_ai_foundation_report.txt
+local_ai_foundation_report.md
+
+# Generated Artifacts
+artifacts/*
+!artifacts/.gitkeep
+
+# Temporary runtime staging & scratch
+.staging/
+scratch/
+

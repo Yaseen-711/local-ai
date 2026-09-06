@@ -206,3 +206,65 @@ def test_two_app_contexts_are_independent(tmp_path: Path):
     assert ctx_a is not ctx_b
     assert ctx_a.core is not ctx_b.core
     assert ctx_a.inference is not ctx_b.inference
+
+
+def test_app_context_type_hints_resolvable():
+    """Verify runtime type hints on AppContext methods resolve without NameError."""
+    import typing
+    from typing import Optional
+    from orchestration import GoalOrchestrator, InProcessPlanRunner, PlanRunner
+    from core import FoundationCore
+
+    hints_orch = typing.get_type_hints(AppContext.create_goal_orchestrator)
+    assert hints_orch["runner"] == Optional[PlanRunner]
+    assert hints_orch["return"] is GoalOrchestrator
+
+    hints_runner = typing.get_type_hints(AppContext.create_in_process_plan_runner)
+    assert hints_runner["return"] is InProcessPlanRunner
+
+    hints_cls = typing.get_type_hints(AppContext)
+    assert hints_cls["core"] is FoundationCore
+    assert hints_cls["inference"] is InferenceConnector
+
+
+def test_app_context_create_vision_inspection_capability(tmp_path: Path):
+    """create_vision_inspection_capability returns VisionInspectionCapability wired to context."""
+    from orchestration.capabilities.builtin.vision import VisionInspectionCapability
+
+    env = _make_tmp_env(tmp_path)
+    ctx = AppContext.create(**env)
+
+    cap = ctx.create_vision_inspection_capability()
+    assert isinstance(cap, VisionInspectionCapability)
+    assert cap._connector is ctx.inference
+
+
+def test_app_context_registry_includes_vision(tmp_path: Path):
+    """create_base_capability_registry registers vision.inspect."""
+    env = _make_tmp_env(tmp_path)
+    ctx = AppContext.create(**env)
+
+    registry = ctx.create_base_capability_registry()
+    assert registry.has("vision.inspect")
+
+
+def test_app_context_create_code_repair_capability(tmp_path: Path):
+    """create_code_repair_capability returns CodeVerificationRepairCapability wired to context."""
+    from orchestration.capabilities.builtin.code_repair import CodeVerificationRepairCapability
+
+    env = _make_tmp_env(tmp_path)
+    ctx = AppContext.create(**env)
+
+    cap = ctx.create_code_repair_capability()
+    assert isinstance(cap, CodeVerificationRepairCapability)
+    assert cap.capability_id == "code.verify_and_repair"
+
+
+def test_app_context_registry_includes_code_verify_and_repair(tmp_path: Path):
+    """create_base_capability_registry registers code.verify_and_repair."""
+    env = _make_tmp_env(tmp_path)
+    ctx = AppContext.create(**env)
+
+    registry = ctx.create_base_capability_registry()
+    assert registry.has("code.verify_and_repair")
+
