@@ -55,3 +55,7 @@ local_ai_foundation_report.md
 artifacts/*
 !artifacts/.gitkeep
 
+# Temporary runtime staging & scratch
+.staging/
+scratch/
+

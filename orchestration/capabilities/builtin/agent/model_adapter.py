@@ -11,6 +11,7 @@ import asyncio
 import json
 import logging
 from typing import Any, Dict, List, Optional
+import base64
 import uuid
 
 from pydantic_ai.messages import (
@@ -33,6 +34,7 @@ from core.inference.types import (
     GenerationOptions,
     InferenceRequest,
     InferenceResponse,
+    MediaAttachment,
     Message,
 )
 from orchestration.routing.model_selector import ModelSelectionPolicy
@@ -84,15 +86,13 @@ class FoundationPydanticAIModel(Model):
 
         for msg in messages:
             if isinstance(msg, ModelRequest):
+                attachments: List[MediaAttachment] = []
+                text_parts: List[str] = []
+
                 for part in msg.parts:
                     if isinstance(part, SystemPromptPart):
                         foundation_messages.append(
                             Message(role=MessageRole.SYSTEM, content=str(part.content))
-                        )
-                    elif isinstance(part, UserPromptPart):
-                        content_str = str(part.content)
-                        foundation_messages.append(
-                            Message(role=MessageRole.USER, content=content_str)
                         )
                     elif isinstance(part, ToolReturnPart):
                         content_val = part.content
@@ -110,12 +110,64 @@ class FoundationPydanticAIModel(Model):
                                 name=part.tool_name,
                             )
                         )
-                    else:
-                        # Fallback for unexpected part types
-                        content = getattr(part, "content", str(part))
-                        foundation_messages.append(
-                            Message(role=MessageRole.USER, content=str(content))
+                    elif isinstance(part, UserPromptPart):
+                        if isinstance(part.content, str):
+                            text_parts.append(part.content)
+                        elif isinstance(part.content, (list, tuple)):
+                            for item in part.content:
+                                if isinstance(item, str):
+                                    text_parts.append(item)
+                                elif hasattr(item, "data") and hasattr(item, "media_type"):
+                                    attachments.append(
+                                        MediaAttachment.from_bytes(
+                                            data=item.data,
+                                            mime_type=item.media_type,
+                                        )
+                                    )
+                                elif hasattr(item, "url"):
+                                    url_val = item.url
+                                    if url_val.startswith("data:"):
+                                        header, _, b64_data = url_val.partition(",")
+                                        mime = header.split(";")[0].replace("data:", "") or "image/png"
+                                        raw = base64.b64decode(b64_data)
+                                        attachments.append(MediaAttachment.from_bytes(raw, mime_type=mime))
+                                    else:
+                                        local_path = url_val.replace("file://", "")
+                                        attachments.append(MediaAttachment.from_file(local_path))
+                                else:
+                                    text_parts.append(str(item))
+                        else:
+                            text_parts.append(str(part.content))
+                    elif hasattr(part, "data") and hasattr(part, "media_type"):
+                        attachments.append(
+                            MediaAttachment.from_bytes(
+                                data=part.data,
+                                mime_type=part.media_type,
+                            )
                         )
+                    elif hasattr(part, "url"):
+                        url_val = part.url
+                        if url_val.startswith("data:"):
+                            header, _, b64_data = url_val.partition(",")
+                            mime = header.split(";")[0].replace("data:", "") or "image/png"
+                            raw = base64.b64decode(b64_data)
+                            attachments.append(MediaAttachment.from_bytes(raw, mime_type=mime))
+                        else:
+                            local_path = url_val.replace("file://", "")
+                            attachments.append(MediaAttachment.from_file(local_path))
+                    else:
+                        content = getattr(part, "content", str(part))
+                        text_parts.append(str(content))
+
+                if text_parts or attachments:
+                    user_content = "\n".join(text_parts) if text_parts else ""
+                    foundation_messages.append(
+                        Message(
+                            role=MessageRole.USER,
+                            content=user_content,
+                            attachments=tuple(attachments),
+                        )
+                    )
 
             elif isinstance(msg, ModelResponse):
                 for part in msg.parts:

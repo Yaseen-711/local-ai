@@ -212,11 +212,27 @@ class LlamaCppProvider(BaseProvider):
         return model_def.id
 
     def _build_payload(self, request: InferenceRequest, model_def: ModelDefinition) -> Dict[str, Any]:
-        """Convert normalized InferenceRequest into OpenAI-compatible request payload."""
-        messages_list = [
-            {"role": msg.role.value, "content": msg.content}
-            for msg in request.messages
-        ]
+        """Construct the llama-server /v1/chat/completions payload from a normalized request."""
+        messages_list: List[Dict[str, Any]] = []
+        for msg in request.messages:
+            if not getattr(msg, "attachments", None):
+                messages_list.append({"role": msg.role.value, "content": msg.content})
+            else:
+                content_blocks: List[Dict[str, Any]] = []
+                if msg.content:
+                    content_blocks.append({"type": "text", "text": msg.content})
+                for att in msg.attachments:
+                    try:
+                        data_uri = att.to_base64_data_uri()
+                    except Exception as e:
+                        raise InferenceError(
+                            f"Failed to load and serialize media attachment '{att.name or att.source_path}': {e}"
+                        ) from e
+                    content_blocks.append({
+                        "type": "image_url",
+                        "image_url": {"url": data_uri},
+                    })
+                messages_list.append({"role": msg.role.value, "content": content_blocks})
 
         runtime_model = self._resolve_runtime_model_id(request, model_def)
         opts = request.options

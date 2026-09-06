@@ -225,3 +225,24 @@ def test_app_context_type_hints_resolvable():
     hints_cls = typing.get_type_hints(AppContext)
     assert hints_cls["core"] is FoundationCore
     assert hints_cls["inference"] is InferenceConnector
+
+
+def test_app_context_create_vision_inspection_capability(tmp_path: Path):
+    """create_vision_inspection_capability returns VisionInspectionCapability wired to context."""
+    from orchestration.capabilities.builtin.vision import VisionInspectionCapability
+
+    env = _make_tmp_env(tmp_path)
+    ctx = AppContext.create(**env)
+
+    cap = ctx.create_vision_inspection_capability()
+    assert isinstance(cap, VisionInspectionCapability)
+    assert cap._connector is ctx.inference
+
+
+def test_app_context_registry_includes_vision(tmp_path: Path):
+    """create_base_capability_registry registers vision.inspect."""
+    env = _make_tmp_env(tmp_path)
+    ctx = AppContext.create(**env)
+
+    registry = ctx.create_base_capability_registry()
+    assert registry.has("vision.inspect")

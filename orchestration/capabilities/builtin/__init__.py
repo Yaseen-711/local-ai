@@ -5,6 +5,7 @@ from orchestration.capabilities.builtin.artifact import ArtifactGenerationCapabi
 from orchestration.capabilities.builtin.code import WorkspaceCodingCapability
 from orchestration.capabilities.builtin.document import DocumentUnderstandingCapability
 from orchestration.capabilities.builtin.inference import InferencePromptCapability
+from orchestration.capabilities.builtin.vision import VisionInspectionCapability
 from orchestration.capabilities.builtin.workflow import TextAnalysisCapability
 
 __all__ = [
@@ -13,5 +14,6 @@ __all__ = [
     "DocumentUnderstandingCapability",
     "InferencePromptCapability",
     "TextAnalysisCapability",
+    "VisionInspectionCapability",
     "WorkspaceCodingCapability",
 ]

@@ -215,12 +215,19 @@ class AppContext:
         )
 
 
+    def create_vision_inspection_capability(self) -> Any:
+        """Create a VisionInspectionCapability wired to this context's InferenceConnector."""
+        from orchestration.capabilities.builtin.vision import VisionInspectionCapability
+
+        return VisionInspectionCapability(connector=self.inference)
+
     def create_base_capability_registry(self) -> Any:
         """Create a CapabilityRegistry with base capabilities registered (excluding agent)."""
         from orchestration.capabilities import CapabilityRegistry
         from orchestration.capabilities.builtin import (
             InferencePromptCapability,
             TextAnalysisCapability,
+            VisionInspectionCapability,
         )
 
         registry = CapabilityRegistry()
@@ -231,6 +238,7 @@ class AppContext:
         registry.register(self.create_document_understanding_capability())
         registry.register(self.create_artifact_generation_capability())
         registry.register(self.create_workspace_coding_capability())
+        registry.register(self.create_vision_inspection_capability())
         return registry
 
     def create_agent_capability(
@@ -428,6 +436,17 @@ class AppContext:
                         "run code in sandbox",
                         "execute command in workspace",
                         "inspect workspace files",
+                    ],
+                ),
+                RouteDefinition(
+                    name="vision_inspection",
+                    strategy=ExecutionStrategy.DIRECT_CAPABILITY,
+                    target_capability_id="vision.inspect",
+                    utterances=[
+                        "inspect image",
+                        "analyze diagram",
+                        "read p&id drawing",
+                        "inspect drawing",
                     ],
                 ),
                 RouteDefinition(
