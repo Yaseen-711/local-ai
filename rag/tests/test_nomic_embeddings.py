@@ -16,10 +16,11 @@ import unittest
 from typing import List
 
 from rag.domain.interfaces import Embedder
-from rag.embeddings.nomic import (
+from rag.embedding.nomic import (
     DOCUMENT_PREFIX,
     EMBEDDING_DIMENSION,
     NomicEmbedder,
+    NomicEmbeddingModel,
     QUERY_PREFIX,
     l2_normalize,
 )

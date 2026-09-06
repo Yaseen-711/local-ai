@@ -8,7 +8,7 @@ import math
 import unittest
 
 from rag.domain.interfaces import Embedder
-from rag.embeddings.nomic import EMBEDDING_DIMENSION, NomicEmbedder
+from rag.embedding.nomic import EMBEDDING_DIMENSION, NomicEmbedder
 
 
 class TestNomicRealModelVerification(unittest.TestCase):
