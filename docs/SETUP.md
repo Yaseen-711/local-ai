@@ -1,587 +1,338 @@
-# Local AI Foundation — Setup
+# Sovereign Industrial AI Workbench — System Setup & Configuration
 
-## Project location
-
-The project repository is located at:
-
-    ~/Projects/local-ai
-
-## Purpose
-
-This project is a reusable local AI foundation.
-
-It provides a stable layer between applications and AI infrastructure so that models and inference runtimes can be replaced without requiring major changes to consumer applications.
-
-The initial architecture is:
-
-    Application
-        ↓
-    AI Foundation
-        ↓
-    Inference Runtime
-        ↓
-    Local Model
-        ↓
-    GPU / CPU
-
-The first verified runtime is llama.cpp using GGUF models.
+This guide provides complete instructions for provisioning, configuring, and verifying the host environment for the Sovereign Industrial AI Workbench.
 
 ---
 
-# Project structure
+## 1. System Requirements
 
-Current intended structure:
+### Hardware Specifications
 
-    local-ai/
-    ├── core/
-    │   ├── config/
-    │   ├── inference/
-    │   └── models/
-    │
-    ├── adapters/
-    │   └── llama_cpp/
-    │
-    ├── api/
-    ├── configs/
-    ├── docs/
-    ├── examples/
-    │   └── simple_chat/
-    ├── models/
-    │   └── gguf/
-    ├── scripts/
-    └── tests/
+| Component | Minimum Specification | Verified Production Baseline |
+|---|---|---|
+| **GPU** | NVIDIA GPU with $\ge$ 12 GB VRAM | NVIDIA GeForce RTX 5070 (12 GB VRAM) |
+| **System RAM** | 32 GB DDR4 / DDR5 | 32 GB DDR5 |
+| **CPU** | 8 Cores (x86_64) | Intel Core i7 / AMD Ryzen 7 (16 vCPUs) |
+| **Storage** | 100 GB NVMe SSD | Fast PCIe Gen4 NVMe |
+| **Network** | Air-gapped / Localhost only | Zero external internet access |
 
-The `core` directory will contain the project's own reusable abstractions.
+### Operating System & Driver Stack
 
-The `adapters` directory contains integrations with external inference runtimes.
+* **Host OS**: Ubuntu 24.04 LTS / 22.04 LTS
+* **NVIDIA Driver**: 570.211.01 or later
+* **CUDA Toolkit**: 12.8 (`/usr/local/cuda-12.8/bin/nvcc`)
+* **Container Runtime**: Docker Engine 24.0+
+* **Python Runtime**: Python 3.12.3
 
 ---
 
-# Containerization
+## 2. Host Toolchain & Driver Setup
 
-Docker is intentionally not used at the beginning.
+### 2.1 NVIDIA Driver & CUDA 12.8
+Confirm the GPU driver and CUDA 12.8 compiler:
+```bash
+nvidia-smi
+/usr/local/cuda-12.8/bin/nvcc --version
+```
+Ensure `/usr/local/cuda-12.8/bin` is present in your `PATH` or explicitly referenced by CMake during builds.
 
-The first goal is to establish and understand a working native inference path on the Ubuntu host:
+### 2.2 Host Package Installation
+Install standard compilation, build, and development packages:
+```bash
+sudo apt update
+sudo apt install -y \
+    build-essential \
+    cmake \
+    ninja-build \
+    git \
+    python3.12 \
+    python3.12-venv \
+    python3.12-dev \
+    docker.io \
+    postgresql-client \
+    curl \
+    jq
+```
 
-    Ubuntu
-        ↓
-    NVIDIA Driver
-        ↓
-    CUDA Runtime
-        ↓
-    llama.cpp
-        ↓
-    GGUF Model
-        ↓
-    GPU Inference
+### 2.3 Docker Engine Permissions
+Ensure the active user can interact with the Docker daemon for sandboxed code execution without requiring `sudo`:
+```bash
+sudo usermod -aG docker "$USER"
+newgrp docker
+docker info
+```
 
-This native path has now been successfully verified.
-
-Containerization can later be introduced around the service layer.
-
-Large model files should normally remain outside container images and be mounted or otherwise provided separately.
-
----
-
-# Reproduction strategy
-
-Every important environment-specific installation and configuration change should be documented in this repository.
-
-The goal is that the repository can later be cloned onto another compatible machine and rebuilt from the documented instructions.
-
-The source code, runtime revision, build configuration, scripts, and documentation should be version controlled.
-
-Large model files should not be committed to Git.
-
----
-
-# Verified native build environment
-
-## Development tools
-
-Verified versions:
-
-    Git: 2.43.0
-    GCC: 13.3.0
-    G++: 13.3.0
-    Python: 3.12.3
-    CMake: 3.28.3
-    Ninja: 1.11.1
+Pull the verified sandbox image:
+```bash
+docker pull python:3.12-slim
+```
 
 ---
 
-# CUDA
+## 3. Python Virtual Environment Setup
 
-The NVIDIA CUDA 12.8 compiler used for project builds is:
+From the repository root (`~/Projects/local-ai`):
 
-    /usr/local/cuda-12.8/bin/nvcc
-
-Verified version:
-
-    CUDA compilation tools, release 12.8, V12.8.93
-
-The system also contains an older Ubuntu-packaged CUDA compiler at:
-
-    /usr/bin/nvcc
-
-This compiler was not modified during the setup.
-
-CUDA projects in this repository should explicitly use the CUDA 12.8 compiler when configuring CMake builds.
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip setuptools wheel
+pip install -e .
+pip install -e ".[dev]"
+```
 
 ---
 
-# NVIDIA GPU
+## 4. Configuration Files
 
-Verified hardware:
+The workbench is managed through declarative configuration files:
 
-    GPU: NVIDIA GeForce RTX 5070
-    VRAM: 12 GB
+### 4.1 `configs/settings.toml`
+Defines application, database, parsing, and sandbox limits:
+```toml
+[foundation]
+environment = "development"
+models_dir = "models"
+configs_dir = "configs/models"
 
-Verified NVIDIA software:
+[providers.llama_cpp]
+base_url = "http://127.0.0.1:8080"
+timeout_seconds = 60
+default_alias = "qwen3.5-9b"
 
-    Driver: 570.211.01
-    CUDA version reported by nvidia-smi: 12.8
+[database]
+url = "postgresql+psycopg://postgres:postgres@localhost:5432/local_ai"
+pool_size = 5
+max_overflow = 10
+echo = false
 
-CUDA Toolkit 12.8 is installed at:
+[document]
+default_parser = "docling"
+enable_ocr = true
+ocr_engine = "rapidocr"
+enable_tables = true
+enable_figures = true
+enable_formulae = true
 
-    /usr/local/cuda-12.8
+[artifact]
+output_dir = "artifacts"
+enable_xlsx = true
+enable_docx = true
+enable_pdf = true
 
----
+[workspace]
+default_executor = "docker"
+docker_image = "python:3.12-slim"
+cpu_limit = 2.0
+mem_limit = "2g"
+network_mode = "none"
+default_timeout_seconds = 60.0
+base_workspaces_dir = ".workspaces"
+```
 
-# llama.cpp runtime
+### 4.2 `configs/llama_models.ini`
+Configures multi-model routing for `llama-server`:
+```ini
+[*]
+ctx-size = 4096
+batch-size = 512
+ubatch-size = 256
+gpu-layers = auto
+cache-type-k = q8_0
+cache-type-v = q8_0
+no-warmup = true
+reasoning = off
 
-The first verified inference runtime is llama.cpp.
+[qwen3.5-9b]
+model = models/gguf/Qwen3.5-9B-Q4_K_M.gguf
+mmproj = models/gguf/Qwen3.5-9B.mmproj-q8_0.gguf
 
-Source location:
-
-    adapters/llama_cpp
-
-Upstream repository:
-
-    https://github.com/ggml-org/llama.cpp.git
-
-Verified commit:
-
-    8887a48f050554f0ee59f56753860c061836b02d
-
-Verified repository description:
-
-    b10736-7-g8887a48f0
-
-The executable used for local inference is:
-
-    adapters/llama_cpp/build/bin/llama-cli
-
----
-
-# llama.cpp CUDA build configuration
-
-The verified build configuration includes:
-
-    Build type: Release
-    Generator: Ninja
-    CUDA enabled: ON
-    CUDA compiler:
-        /usr/local/cuda-12.8/bin/nvcc
-
-Verified relevant CMake configuration:
-
-    CMAKE_BUILD_TYPE=Release
-    CMAKE_CUDA_COMPILER=/usr/local/cuda-12.8/bin/nvcc
-    GGML_CUDA=ON
-    GGML_CUDA_FA=ON
-    GGML_CUDA_GRAPHS=ON
-
-The official llama.cpp build documentation uses CMake and supports CUDA builds using:
-
-    -DGGML_CUDA=ON
-
-The exact compiler path is explicitly configured in this project because the system also contains an older CUDA compiler.
-
----
-
-# Verified model
-
-The currently verified local model is:
-
-    models/gguf/Qwen3.5-9B-Q4_K_M.gguf
-
-Verified file size:
-
-    approximately 5.3 GB
-
-Model format:
-
-    GGUF
-
-Quantization:
-
-    Q4_K Medium
-
-The initial model storage structure is:
-
-    models/
-    └── gguf/
-
-Future model formats may include:
-
-    models/
-    ├── gguf/
-    ├── safetensors/
-    ├── onnx/
-    └── other/
-
-The model format should not determine the public application interface.
-
-The inference adapter/runtime layer should handle format-specific loading.
+[qwen3.5-0.8b]
+model = models/gguf/Qwen3.5-0.8B-Q4_0.gguf
+```
 
 ---
 
-# Verified local inference
+## 5. PostgreSQL & pgvector Database Setup
 
-The following inference configuration was successfully tested.
+The workbench strictly separates orchestration state from RAG vector storage.
 
-    GPU layers: automatic
-    Context size: 4096
-    KV cache K: Q8_0
-    KV cache V: Q8_0
-    Batch size: 512
-    Micro-batch size: 256
-    Warmup: disabled
-    Reasoning: disabled
+### 5.1 Launch Database Container
+```bash
+docker run -d \
+  --name local-ai-pg \
+  --restart unless-stopped \
+  -p 5432:5432 \
+  -e POSTGRES_PASSWORD=postgres \
+  pgvector/pgvector:pg16
+```
 
-The verified smoke test command used:
+### 5.2 Create Databases & Enable Extensions
+```bash
+createdb -h localhost -U postgres local_ai
+createdb -h localhost -U postgres local_ai_rag
+psql -h localhost -U postgres -d local_ai_rag -c "CREATE EXTENSION IF NOT EXISTS vector;"
+```
 
-    llama-cli
-        model: Qwen3.5-9B-Q4_K_M.gguf
-        GPU layers: automatic
-        context: 4096
-        reasoning: off
-
-The model successfully returned:
-
-    Local inference is working.
-
-Observed approximate performance:
-
-    Prompt processing: 353 tokens/second
-    Generation: 80 tokens/second
-
-These measurements are specific to this machine, model, runtime revision, and configuration.
-
-They should not be treated as universal benchmarks.
+### 5.3 Apply Schema Migrations
+```bash
+.venv/bin/alembic upgrade head
+```
 
 ---
 
-# Reasoning configuration
+## 6. Air-Gap & Offline Configuration
 
-The model was initially observed producing a visible thinking trace when reasoning was automatically enabled.
+To guarantee air-gap compliance and eliminate network egress, set the following environment variables in your shell profile or deployment unit:
 
-llama.cpp provides reasoning controls including:
-
-    --reasoning on
-    --reasoning off
-    --reasoning auto
-
-The verified smoke test uses:
-
-    --reasoning off
-
-This configuration causes the model to respond directly rather than generating a visible thinking process.
-
-Reasoning should eventually become a configurable runtime option exposed by the AI Foundation.
-
-Applications should not need to know how a particular model implements reasoning.
+```bash
+export HF_HUB_OFFLINE=1
+export TRANSFORMERS_OFFLINE=1
+export RAG_OFFLINE_MODE=true
+export DATABASE_URL="postgresql+psycopg://postgres:postgres@localhost:5432/local_ai"
+export RAG_DATABASE_URL="postgresql+psycopg://postgres:postgres@localhost:5432/local_ai_rag"
+```
 
 ---
 
-# Current verified inference path
+## 7. Operational Health Checks
 
-The currently working path is:
+Verify each subsystem sequentially:
 
-    User Prompt
-        ↓
-    llama-cli
-        ↓
-    llama.cpp
-        ↓
-    CUDA backend
-        ↓
-    RTX 5070
-        ↓
-    GGUF model
-        ↓
-    Generated response
+### 1. Check Inference Engine
+```bash
+./scripts/start_llama_server.sh &
+curl -s http://127.0.0.1:8080/health
+```
 
-This confirms that the following components are working together:
+### 2. Verify Smoke Test
+```bash
+./scripts/run_smoke_test.sh
+```
+Expected output: `Local inference is working.`
 
-    Ubuntu host
-    NVIDIA driver
-    CUDA 12.8
-    llama.cpp CUDA build
-    RTX 5070 GPU
-    GGUF model loading
-    GPU-accelerated local inference
+### 3. Verify PostgreSQL Connectivity
+```bash
+psql -h localhost -U postgres -d local_ai -c "SELECT 1;"
+psql -h localhost -U postgres -d local_ai_rag -c "SELECT 1;"
+```
 
----
+### 4. Verify Docker Sandbox Isolation
+```bash
+docker run --rm --network none --memory 2g python:3.12-slim python3 -c "print('Sandbox functional')"
+```
 
-# Current project status
-
-The first native local inference path is now verified.
-
-Completed:
-
-    [x] Ubuntu development environment
-    [x] NVIDIA driver verification
-    [x] CUDA 12.8 verification
-    [x] CUDA compiler verification
-    [x] llama.cpp source checkout
-    [x] CUDA-enabled llama.cpp build
-    [x] GGUF model placement
-    [x] GPU inference smoke test
-    [x] Q8_0 KV cache configuration
-    [x] Reasoning disabled configuration
-    [x] Performance observation
-
-Next:
-
-    [ ] Create reproducible project scripts
-    [ ] Complete repository documentation
-    [ ] Configure Git tracking and ignores
-    [ ] Decide how llama.cpp is tracked by the parent repository
-    [ ] Create the first reproducible project commit
-    [ ] Verify rebuilding from documented commands
-    [ ] Introduce llama-server
-    [ ] Create a stable local API
-    [ ] Design the AI Foundation interface
-    [ ] Add additional runtimes and model formats behind adapters
+### 5. Start Workbench API & Check Telemetry
+```bash
+.venv/bin/uvicorn apps.api.app:app --host 0.0.0.0 --port 8000 &
+curl -s http://localhost:8000/telemetry/health | jq .
+```
+Expected response:
+```json
+{
+  "status": "healthy",
+  "inference_server": "online",
+  "database": "connected",
+  "rag_database": "connected",
+  "models_available": ["qwen3.5-9b", "qwen3.5-0.8b"]
+}
+```
 
 ---
 
-# Important design rule
-
-The current llama.cpp + GGUF setup is the first verified implementation.
-
-It is not intended to become the permanent architecture of the entire project.
-
-The eventual goal is:
-
-    Application
-        ↓
-    Stable AI Foundation Interface
-        ↓
-    Runtime / Model Adapter
-        ↓
-    llama.cpp / other runtime
-        ↓
-    GGUF / SafeTensors / other format
-        ↓
-    GPU / CPU / future hardware
-
-Applications should eventually depend on the AI Foundation interface rather than directly depending on llama.cpp or a specific model format.
-
----
-
-# Reproducible project state
-
-The project has now been converted from an exploratory local setup into a reproducible Git repository structure.
-
-The parent repository tracks llama.cpp as a Git submodule.
-
-Verified llama.cpp commit:
-
-    8887a48f050554f0ee59f56753860c061836b02d
-
-The upstream repository is:
-
-    https://github.com/ggml-org/llama.cpp.git
-
-The submodule is intentionally pinned to the verified commit so that the same source revision can be reproduced later.
-
-The llama.cpp working tree is therefore not copied into the Local AI Foundation repository as ordinary source files.
-
-Instead:
-
-    Local AI Foundation repository
-            ↓
-    Git submodule reference
-            ↓
-    llama.cpp upstream repository
-            ↓
-    pinned verified commit
-
-## Reproducible scripts
-
-Two project scripts are available.
-
-### Build llama.cpp
-
-    ./scripts/build_llama_cpp.sh
-
-This configures and builds llama.cpp using:
-
-    Build type: Release
-    Generator: Ninja
-    CUDA compiler: /usr/local/cuda-12.8/bin/nvcc
-    CUDA backend: enabled
-
-### Run the smoke test
-
-    ./scripts/run_smoke_test.sh
-
-This runs the verified inference configuration using:
-
-    GPU layers: automatic
-    Context size: 4096
-    K cache: Q8_0
-    V cache: Q8_0
-    Batch size: 512
-    Micro-batch size: 256
-    Warmup: disabled
-    Reasoning: disabled
-
-Expected output:
-
-    Local inference is working.
-
-## Model storage policy
-
-Large model files are not committed to Git.
-
-The verified model is stored locally at:
-
-    models/gguf/Qwen3.5-9B-Q4_K_M.gguf
-
-The Git repository preserves the model directory structure using:
-
-    models/.gitkeep
-    models/gguf/.gitkeep
-
-Model formats are ignored through .gitignore.
-
-## Current project status
-
-Completed:
-
-    [x] Ubuntu development environment
-    [x] NVIDIA driver verification
-    [x] CUDA 12.8 verification
-    [x] CUDA compiler verification
-    [x] llama.cpp source verification
-    [x] llama.cpp pinned Git submodule
-    [x] CUDA-enabled llama.cpp build
-    [x] GGUF model placement
-    [x] GPU inference smoke test
-    [x] Q8_0 KV cache configuration
-    [x] Reasoning disabled configuration
-    [x] Performance observation
-    [x] Reproducible build script
-    [x] Reproducible inference smoke test script
-    [x] Repository documentation
-    [x] Model Git ignore policy
-    [x] llama.cpp source revision pinning
-
-Next:
-
-    [ ] Verify clean rebuild from project scripts
-    [ ] Create first reproducible Git commit
-    [ ] Introduce llama-server
-    [ ] Verify persistent local inference service
-    [ ] Create a stable local API
-    [ ] Design the AI Foundation interface
-    [ ] Add additional runtimes behind adapters
-    [ ] Add additional model formats behind adapters
-
-
----
-
-# Reproducible project checkpoint
-
-The first verified local inference implementation has now been converted into a reproducible project checkpoint.
-
-## Repository tracking
-
-The parent project repository tracks:
-
-- Project documentation
-- Build and verification scripts
-- Directory structure
-- llama.cpp as a Git submodule
-
-The llama.cpp submodule is pinned to:
-
-    8887a48f050554f0ee59f56753860c061836b02d
-
-Upstream repository:
-
-    https://github.com/ggml-org/llama.cpp.git
-
-## Model tracking policy
-
-The verified model is intentionally not tracked by Git.
-
-Verified model location:
-
-    models/gguf/Qwen3.5-9B-Q4_K_M.gguf
-
-Large model files are ignored through `.gitignore`.
-
-The directory structure is preserved using `.gitkeep` files.
-
-## Reproducibility scripts
-
-The project currently provides:
-
-    scripts/build_llama_cpp.sh
-
-for configuring and building llama.cpp with CUDA support.
-
-The project also provides:
-
-    scripts/run_smoke_test.sh
-
-for verifying the documented local inference path.
-
-## Verified scripted smoke test
-
-The smoke test was successfully executed through:
-
-    ./scripts/run_smoke_test.sh
-
-The verified response was:
-
-    Local inference is working.
-
-Observed performance during the scripted verification:
-
-    Prompt processing: approximately 338.6 tokens/second
-    Generation: approximately 81.5 tokens/second
-
-These measurements are environment-dependent and are recorded only as an observation of this verified configuration.
-
-## Current checkpoint
-
-At this checkpoint, the following path is verified:
-
-    User Prompt
-        ↓
-    Project smoke test script
-        ↓
-    llama-cli
-        ↓
-    llama.cpp
-        ↓
-    CUDA backend
-        ↓
-    NVIDIA RTX 5070
-        ↓
-    GGUF model
-        ↓
-    Generated response
-
-The first reproducible local inference foundation is now complete.
-
-The next stage is not additional model testing.
-
-The next stage is to introduce llama-server and establish a persistent local inference service before building the higher-level AI Foundation interface.
+## 8. Reproducing on macOS / Apple Silicon (MacBook)
+
+The Sovereign Industrial AI Workbench can be reproduced on modern Apple Silicon MacBooks (M1 / M2 / M3 / M4) using Apple's unified memory and Metal acceleration instead of NVIDIA CUDA.
+
+### 8.1 Hardware & Memory Guidelines
+* **Architecture**: Apple Silicon (`arm64` - M1, M2, M3, or M4 Pro/Max/Ultra recommended).
+* **Unified Memory (RAM)**:
+  - **Minimum**: 16 GB unified memory (can host `qwen3.5-9b` with small context, but memory pressure will be tight during concurrent RAG indexing).
+  - **Recommended**: 32 GB or 36 GB+ unified memory. Apple Silicon shares system memory dynamically between CPU and GPU cores, easily accommodating `qwen3.5-9b` (~5.3 GB), `qwen3.5-0.8b` (~560 MB), vision projection, and embeddings simultaneously with zero PCIe bandwidth bottleneck.
+
+### 8.2 Host Prerequisites via Homebrew
+Install the required development toolchain using Homebrew:
+```bash
+# 1. Install Xcode command line developer tools
+xcode-select --install
+
+# 2. Install build tools, Python 3.12, and PostgreSQL client
+brew install cmake ninja python@3.12 libpq
+```
+
+Make sure Python 3.12 and `libpq` binaries are available in your path:
+```bash
+export PATH="/opt/homebrew/opt/libpq/bin:/opt/homebrew/opt/python@3.12/libexec/bin:$PATH"
+```
+
+### 8.3 Building `llama.cpp` with Apple Metal
+On macOS, replace the CUDA backend (`-DGGML_CUDA=ON`) with Apple Metal (`-DGGML_METAL=ON`). Metal shaders compile directly to run on Apple Silicon GPU cores.
+
+From the repository root:
+```bash
+cmake -S adapters/llama_cpp \
+  -B adapters/llama_cpp/build \
+  -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DGGML_METAL=ON
+
+cmake --build adapters/llama_cpp/build --config Release
+```
+
+Verify the native Metal build:
+```bash
+./adapters/llama_cpp/build/bin/llama-cli --version
+```
+The output should report `Metal` support enabled.
+
+### 8.4 Python Virtual Environment on macOS
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip setuptools wheel
+pip install -e .
+pip install -e ".[dev]"
+```
+
+*Note on PyTorch*: On Apple Silicon, PyTorch automatically includes MPS (Metal Performance Shaders) backend acceleration for tensor operations and embeddings (`device="mps"` or `device="cpu"`).
+
+### 8.5 Docker for Sandboxed Code Execution
+The `code.workspace` capability executes Python calculations inside an isolated container.
+* Install **Docker Desktop** or **OrbStack** for macOS.
+* Ensure the Docker daemon is running:
+  ```bash
+  docker pull python:3.12-slim
+  ```
+  Docker Desktop on Apple Silicon seamlessly runs `python:3.12-slim` as native `linux/arm64`.
+
+### 8.6 Database Setup
+Run the `pgvector` container via Docker Desktop (which provides native ARM64 container support):
+```bash
+docker run -d \
+  --name local-ai-pg \
+  -p 5432:5432 \
+  -e POSTGRES_PASSWORD=postgres \
+  pgvector/pgvector:pg16
+
+createdb -h localhost -U postgres local_ai
+createdb -h localhost -U postgres local_ai_rag
+psql -h localhost -U postgres -d local_ai_rag -c "CREATE EXTENSION IF NOT EXISTS vector;"
+
+.venv/bin/alembic upgrade head
+```
+
+### 8.7 Launching & Verifying on macOS
+1. **Start the Multi-Model Router**:
+   ```bash
+   ./scripts/start_llama_server.sh
+   ```
+   Metal will automatically manage layer offloading into Apple unified memory.
+2. **Run Inference Smoke Test**:
+   ```bash
+   ./scripts/run_smoke_test.sh
+   ```
+3. **Run Test Suites**:
+   ```bash
+   .venv/bin/pytest tests/unit/ -v
+   ```
 

@@ -47,9 +47,13 @@ models/**/*.onnx
 *.swo
 *~
 
-# Project Reports
+# Project Reports & Archive
+archive/
 local_ai_foundation_report.txt
 local_ai_foundation_report.md
+mrpl.md
+PROJECT_CONTEXT.md
+project_context.md
 
 # Generated Artifacts
 artifacts/*

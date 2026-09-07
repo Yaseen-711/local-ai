@@ -1,511 +1,251 @@
-# Local AI Foundation — Core Architecture (Stage 1)
+# Sovereign Industrial AI Workbench — Architecture Guide
 
-## 1. Architectural Philosophy
+## 1. Architectural Philosophy & Sovereignty
 
-The Local AI Foundation is a self-hosted, modular infrastructure layer designed to decouple consumer applications (code review, data analysis, document extraction, RAG, reports, agents, and chat) from underlying model formats, inference runtimes, and deployment topologies.
+The Local AI Foundation (MRPL Sovereign Industrial AI Workbench) is an air-gapped, fully self-hosted engineering intelligence system. It provides an enterprise-grade layer separating high-level industrial workflows (P&ID diagram analysis, equipment specification queries, engineering verification, and artifact generation) from local model runtimes, vector storage, and hardware acceleration.
+
+### Core Principles
+
+1. **Zero External Egress (True Sovereignty)**: All inference, document processing, vector search, code sandboxing, and artifact rendering execute strictly on local compute with `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1`.
+2. **Stateless Foundation vs. Stateful Orchestration**: The Foundation Core remains strictly stateless and capability-neutral. Multi-step workflows, task DAGs, plan retries, and persistence reside entirely in the Orchestration and Application layers.
+3. **Decoupled Database Isolation**: Orchestration state (goals, plans, task logs) is stored in the `local_ai` PostgreSQL database, while the RAG subsystem operates in an isolated `local_ai_rag` database with `pgvector`.
+4. **Deterministic Validation Before Execution**: Generated plans must pass a 4-stage deterministic validator (schema, capability presence, DAG acyclicity, and parameter bindings) before execution begins.
+5. **Least-Privilege Isolation**: Python calculation and code repair execute inside an isolated Docker sandbox with zero network access, memory/CPU quotas, and ephemeral volumes.
+
+---
+
+## 2. Multi-Layer Architecture
 
 ```text
-Application Entry Points (CLI / API / UI / Scripts / Agents)
-        │  bootstrap via
-        ▼
-AppContext (`apps.AppContext`) – Composition Root & Workflow Factory
-        │  provides InferenceConnector to
-        ▼
-Workflows / Applications (`workflows/`)
-        │
-        ▼
-Connector Layer (`connectors.InferenceConnector`)
-        │
-        ▼
-Foundation Core (`core.FoundationCore`)
-   ├── Model Registry & Config (Declarative TOML definitions, advisory disk availability)
-   ├── Provider Manager (Provider dispatch, thread-safe synchronization)
-   └── Inference Contracts (Normalized Request ──► Normalized Response)
-        │
-        ▼
-Provider Manager / Provider Adapters (`LlamaCppProvider` via HTTP client mode)
-        │
-        ▼
-Inference Runtime (`llama-server` on 127.0.0.1:8080)
-        │
-        ▼
-Models & Hardware (GGUF / CUDA 12.8 / NVIDIA RTX 5070)
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 1. API & PRESENTATION LAYER (`apps/api`)                                    │
+│    FastAPI Application • SSE EventBus • REST Endpoints:                      │
+│    /goals (DAG execution) • /direct (Bypass) • /rag • /files • /artifacts    │
+└──────────────────────────────────────┬──────────────────────────────────────┘
+                                       │ bootstrap via
+┌──────────────────────────────────────▼──────────────────────────────────────┐
+│ 2. COMPOSITION ROOT (`apps/context.py` - `AppContext`)                       │
+│    Wires FoundationCore, InferenceConnector, CapabilityRegistry,             │
+│    DecisionEngine, GoalOrchestrator, and PlanRunner into a typed root.      │
+└───────────────────┬─────────────────────────────────────┬───────────────────┘
+                    │                                     │
+┌───────────────────▼───────────────────┐ ┌───────────────▼───────────────────┐
+│ 3. DECISION & PLANNING LAYER          │ │ 4. EXECUTION ENGINE               │
+│    orchestration/decision/            │ │    orchestration/execution/       │
+│    orchestration/routing/             │ │                                   │
+│    ├── StagedEscalationRouter         │ │ ├── GoalOrchestrator              │
+│    │    Stage 1: Regex Matcher        │ │ ├── InProcessPlanRunner           │
+│    │    Stage 2: Semantic Router      │ │ │    (Topological DAG scheduler)  │
+│    │    Stage 3: Fast 0.8B Classifier │ │ ├── PlanValidator (4-stage checks)│
+│    │    Stage 4: 9B Classifier        │ │ └── PostgresOrchestrationRepo     │
+│    ├── DecisionEngine (Direct vs Plan)│ │      (Target DB: `local_ai`)      │
+│    └── LLMPlanner (DAG synthesis)     │ │                                   │
+└───────────────────┬───────────────────┘ └───────────────┬───────────────────┘
+                    │                                     │
+┌───────────────────▼─────────────────────────────────────▼───────────────────┐
+│ 5. CAPABILITY LAYER (`orchestration/capabilities`)                           │
+│    Protocol-driven registered capability descriptors:                       │
+│    ├── `retrieval.rag`          (Vector search, cross-encoder, grounded QA) │
+│    ├── `vision.inspect`         (Multimodal P&ID & diagram inspection)      │
+│    ├── `document.understand`    (Docling / PyMuPDF table/text extraction)   │
+│    ├── `code.workspace`         (Docker-isolated Python calculation sandbox)│
+│    ├── `code.verify_and_repair` (Multi-turn verification & repair loop)     │
+│    ├── `artifact.generate`      (Excel XLSX, Word DOCX, Slides PPTX, PDF)   │
+│    ├── `workflow.text_analysis` (Single-pass & two-pass structured analysis)│
+│    └── `agent.pydantic_ai`      (Bounded autonomous tool agent)             │
+└───────────────────┬─────────────────────────────────────┬───────────────────┘
+                    │                                     │
+┌───────────────────▼───────────────────┐ ┌───────────────▼───────────────────┐
+│ 6. SOVEREIGN RAG SUBSYSTEM (`rag/`)   │ │ 7. FOUNDATION CORE (`core/`)      │
+│    Database: `local_ai_rag` (pgvector)│ │    ├── ModelRegistry (TOMLs)      │
+│    ├── Ingestion & Chunking           │ │    ├── ProviderManager            │
+│    ├── Nomic-embed-text-v1.5 (768d)   │ │    └── FoundationInferenceConnect │
+│    ├── Cosine Vector Similarity       │ └───────────────┬───────────────────┘
+│    ├── MiniLM Cross-Encoder Reranker  │                 │
+│    └── Grounded QA & Refusal Engine   │                 │
+└───────────────────────────────────────┘                 │
+                                                          ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 8. PROVIDER LAYER & RUNTIME (`adapters/llama_cpp`)                          │
+│    LlamaCppProvider (HTTP Client Mode) ──► 127.0.0.1:8080                   │
+│    llama-server (Multi-Model Native Router Mode):                           │
+│    ├── Slot 1: `qwen3.5-9b` + `Qwen3.5-9B.mmproj-q8_0` (LLM & Vision)       │
+│    └── Slot 2: `qwen3.5-0.8b` (Fast Routing & Intent Classification)        │
+└──────────────────────────────────────┬──────────────────────────────────────┘
+                                       │
+┌──────────────────────────────────────▼──────────────────────────────────────┐
+│ 9. HARDWARE LAYER                                                           │
+│    NVIDIA GeForce RTX 5070 (12 GB VRAM) • Driver 570.211.01 • CUDA 12.8      │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 2. Separation of Concerns & State Ownership
+## 3. Layer Breakdown & Boundaries
 
-1. **Model Registry Ownership**:
-   - Owns canonical model IDs, aliases, declared capabilities, and metadata loaded from `configs/models/*.toml`.
-   - Owns cached **advisory** filesystem availability (`AvailabilityInfo`).
-   - Does **NOT** own runtime process state or loaded model authority.
-2. **Provider / Runtime Ownership**:
-   - The provider layer (`LlamaCppProvider`) is authoritative for runtime execution and connectivity.
-   - Probes runtime health (`RuntimeState.READY`, `UNAVAILABLE`, `ERROR`).
-3. **Filesystem vs Configuration**:
-   - The filesystem determines path existence and file size.
-   - Configuration defines capabilities, roles, aliases, and provider compatibility.
-   - Filesystem is never scanned on each inference request; scans occur on startup or explicit `registry.refresh()`.
+### 3.1 API & Presentation Layer (`apps/api/`)
+The external boundary exposing the workbench through asynchronous HTTP endpoints and Server-Sent Events (SSE):
+* `POST /goals`: Submits natural language engineering goals. Triggers the `DecisionEngine` to plan and execute a multi-task DAG, streaming step progress over SSE.
+* `POST /direct`: Bypasses planning to execute a single capability immediately (e.g. direct text analysis or direct document parsing).
+* `POST /rag/query`: Queries the Sovereign RAG knowledge base for grounded facts and citations.
+* `POST /rag/ingest`: Ingests technical documentation into `local_ai_rag`.
+* `POST /files/upload`: Uploads and stages documents (PDF, DOCX) and diagrams (PNG, JPG) in the ephemeral staging area.
+* `GET /artifacts/{id}/download`: Downloads generated engineering artifacts (XLSX, DOCX, PPTX, PDF) with cryptographic SHA-256 verification.
+* `GET /telemetry/health`: Probes runtime health, model availability, database connectivity, and GPU VRAM allocation.
 
----
+### 3.2 Process Composition Root (`apps/context.py` - `AppContext`)
+`AppContext` is a frozen dataclass acting as the central dependency injection composition root. It initializes:
+* `FoundationCore` and `InferenceConnector`
+* All 8 capability implementations
+* The `CapabilityRegistry`
+* The `StagedEscalationRouter` and `LLMPlanner`
+* The `PlanValidator` and `GoalOrchestrator`
+* Database connections for orchestration (`local_ai`) and RAG (`local_ai_rag`)
 
-## 3. Data Contracts
-
-### 3.1 Model Schema (`core.models.schema`)
-* `ModelDefinition`: Immutable declaration of model metadata, supported providers, aliases, and capabilities.
-* `ModelCapabilities`: Declared flags (`chat`, `code`, `reasoning`, `structured_output`, `context_window`).
-* `AvailabilityInfo`: Advisory file presence and byte size on disk.
-
-### 3.2 Inference Contracts (`core.inference.types`)
-* `Message`: Structured message representation (`MessageRole.SYSTEM`, `USER`, `ASSISTANT`, `TOOL`).
-* `OutputConstraint`: Declarative structural constraint on token generation (`format="json"`, or `from_grammar(...)`). Requires an explicit format; unsupported formats are rejected by providers.
-* `GenerationOptions`: Normalized parameters (`temperature`, `top_p`, `max_tokens`, `stop_sequences`, `seed`, `constraint`, `extra_options`). Enforces universal invariants via `__post_init__`: finite non-negative `temperature`, finite `top_p` in `[0.0, 1.0]`, positive integer `max_tokens > 0`, and integer `seed`. Does not impose runtime-specific sentinel semantics.
-* `InferenceRequest`: Normalized container for model ID, messages list, and generation options.
-* `TokenUsage`: Normalized accounting (`prompt_tokens`, `completion_tokens`, `total_tokens`).
-* `InferenceResponse`: Normalized output with generated message (strictly raw text in `message.content`), finish reason (`FinishReason.STOP`, `LENGTH`), token usage, latency (ms), and optional diagnostic `raw_response`.
-
-
-
----
-
-## 4. Model Configuration Schema
-
-Individual model configuration files reside in `configs/models/<model-id>.toml`:
-
-```toml
-[model]
-id = "qwen3.5-9b"
-display_name = "Qwen 3.5 9B Q4_K_M"
-format = "gguf"
-path = "models/gguf/Qwen3.5-9B-Q4_K_M.gguf"
-aliases = ["qwen3.5", "qwen-9b", "default"]
-supported_providers = ["llama_cpp"]
-roles = ["general", "coding"]
-
-[capabilities]
-chat = true
-code = true
-reasoning = false
-structured_output = true
-context_window = 4096
-
-[metadata]
-quantization = "Q4_K_M"
-parameter_count = "9B"
-architecture = "qwen35"
-verified_date = "2026-09-01"
-```
-
----
-
-## 5. Reusable Execution Boundary (`FoundationCore.infer`)
-
-The execution boundary is the interface through which higher-level workflows request AI inference:
+### 3.3 Decision & Planning Layer (`orchestration/decision/`, `routing/`, `planning/`)
+When a user submits a natural language request, the `DecisionEngine` determines whether to route directly to a single capability or invoke multi-step DAG planning:
 
 ```text
-Higher-Level Workflows (Chat, RAG, Agents, Tool Pipelines, Code Review, Document Gen)
-                                  │
-                                  ▼
-                    FoundationCore.infer(request)
-               [or convenience: core.infer_prompt(...)]
-                                  │
-                                  ▼
-               ProviderManager.execute_inference(request)
-               ├── 1. Resolve ModelDefinition (via ModelRegistry)
-               ├── 2. Select compatible Provider (via ProviderManager)
-               └── 3. Translate ID & Dispatch (via BaseProvider.infer)
-                                  │
-                                  ▼
-                   Normalized InferenceResponse
+User Request: "Review this P&ID against equipment specs, calculate margin, and generate XLSX"
+                                      │
+                                      ▼
+                           StagedEscalationRouter
+   Stage 1: Deterministic regex/prefix match (0ms)
+   Stage 2: Semantic Router (Aurelio cosine distance)
+   Stage 3: Fast 0.8B LLM Classifier (qwen3.5-0.8b)
+   Stage 4: Reasoning 9B LLM Classifier (qwen3.5-9b)
+                                      │
+                 ┌────────────────────┴────────────────────┐
+                 ▼                                         ▼
+      ExecutionStrategy.DIRECT                  ExecutionStrategy.PLAN_REQUIRED
+  (Execute single capability)                              │
+                                                           ▼
+                                                       LLMPlanner
+                                            Synthesizes multi-task DAG plan
+                                                           │
+                                                           ▼
+                                                     PlanValidator
+                                            4-Stage Deterministic Verification
+                                                           │
+                                                           ▼
+                                                    GoalOrchestrator
 ```
 
-### Architectural Principles of the Execution Boundary
-1. **Stateless & Reusable**:
-   `FoundationCore.infer()` is a reusable callable execution component, **not a fixed pipeline stage**.
-   Higher-level workflows may invoke it:
-   * Once for simple queries or chat.
-   * Multiple times across iterative agent loops or planning steps.
-   * After document retrieval in RAG workflows.
-   * Before and after tool/sandbox execution.
-   * As an internal helper inside code review or PDF/report generation workflows.
-2. **Workflow Agnostic**:
-   The Foundation execution layer itself does **not** determine whether a task is RAG, an agentic loop, document processing, code analysis, or chat. Those decisions belong strictly to higher-level orchestration layers.
-3. **Runtime Model Identifier Translation**:
-   The provider owns translation from Foundation model identities/aliases to runtime-specific model identifiers. Foundation-only aliases (such as `"default"` or `"general"`) are resolved to canonical definitions, and the provider sends the verified server identifier to the backend runtime.
-4. **Strict Error Boundary (No Silent Fallbacks)**:
-   The execution layer reliably reports failure domains (`ModelNotFoundError`, `ProviderNotFoundError`, `ProviderUnavailableError`, `InferenceError`, `ProviderResponseError`). It **does not** silently guess or fall back to another model. Higher-level orchestration layers retain explicit authority over retry, fallback, or error recovery strategies.
-5. **Provider Contract Hardening**:
-   * `base_url` must use `http://` or `https://` schemes (`ConfigurationError`).
-   * Bounded HTTP response read: memory consumption is strictly capped via `max_response_bytes` (defaults to 10 MiB, positive integer validated; raises `ProviderResponseError` on overflow).
-   * Reserved-key protection: `extra_options` cannot collide with normalized parameters (`InferenceError`).
-   * Constraint enforcement: unsupported `OutputConstraint` formats are rejected pre-flight (`InferenceError`).
-   * Telemetry validation: absent/null usage fields default to 0, while corrupt non-numeric fields raise `ProviderResponseError`.
+### 3.4 Execution & DAG Engine (`orchestration/execution/`)
+* **`InProcessPlanRunner`**: Topologically sorts DAG tasks, resolves upstream task outputs to downstream input parameters, executes capabilities concurrently where dependencies allow, and handles task-level retry policies.
+* **State Persistence**: Persists goals, plans, and task statuses to PostgreSQL (`local_ai`) using `PostgresOrchestrationRepository`.
 
+### 3.5 The Capability Layer (`orchestration/capabilities/`)
+Every capability conforms to the structural `Capability` protocol:
+```python
+class Capability(Protocol):
+    @property
+    def capability_id(self) -> str: ...
+    def get_descriptor(self) -> CapabilityDescriptor: ...
+    def execute(self, params: Dict[str, Any], context: Optional[ExecutionContext] = None) -> TaskResult: ...
+```
+
+Registered Capabilities:
+1. `retrieval.rag`: Interacts with `local_ai_rag` to perform hybrid search and grounded question answering.
+2. `vision.inspect`: Encodes diagram images into base64 and invokes `qwen3.5-9b` with the multimodal projector to detect equipment tags, line numbers, and instrument connections.
+3. `document.understand`: Extracts structured hierarchy, markdown text, and tables from PDFs using Docling (with PyMuPDF fallback).
+4. `code.workspace`: Spawns a hardened Docker container (`python:3.12-slim`) with no network access (`network_mode="none"`), memory limits (`2g`), and CPU limits (`2.0`) to run calculations.
+5. `code.verify_and_repair`: Runs a verification loop that generates test cases, tests code in the sandbox, captures stderr/tracebacks, and repairs code up to 3 turns.
+6. `artifact.generate`: Produces binary engineering files (OpenPyXL workbooks with dynamic formulas, python-docx technical memos, python-pptx slide decks).
+7. `workflow.text_analysis`: Executes single-pass extraction or two-pass executive synthesis.
+8. `agent.pydantic_ai`: Bounded agent that can invoke tools registered in the `CapabilityRegistry` under strict execution policy budgets.
 
 ---
 
-## 6. The Connector Layer (`connectors.InferenceConnector`)
+## 4. Sovereign RAG Subsystem
 
-The Connector Layer provides the capability integration boundary between future orchestration/workflow layers and the underlying Foundation:
+The RAG subsystem (`rag/`) is an isolated, air-gapped retrieval engine:
 
 ```text
-Future Orchestrators / Workflows (Chat, RAG, Agents, Code Review, Document Gen)
-                                   │
-                                   ▼
-                InferenceConnector (Structural Protocol)
-                                   │
-                                   ▼
-             FoundationInferenceConnector (In-Process Bridge)
-                                   │
-                                   ▼
-                    FoundationCore.infer(request)
-                                   │
-                                   ▼
-               ProviderManager.execute_inference(request)
-                                   │
-                                   ▼
-                            LlamaCppProvider
-                                   │
-                                   ▼
-                              llama-server
+Incoming Document (PDF / DOCX / TXT)
+                 │
+                 ▼
+     Ingestion & Normalization (`rag/ingestion`)
+                 │
+                 ▼
+     Hierarchical Chunking (`rag/chunking`)
+                 │
+                 ▼
+     Nomic Embedding Model (`rag/embedding/nomic.py`)
+     • 768 dimensions
+     • Prefix: "search_document: "
+     • L2 normalization
+                 │
+                 ▼
+     PostgreSQL + pgvector (`local_ai_rag`)
+     • Table: document_chunks
+     • Cosine similarity search (1 - (embedding <=> query_vec))
+                 │
+                 ▼
+     Candidate Retrieval (Top-K)
+                 │
+                 ▼
+     Cross-Encoder Reranker (`rag/reranking/cross_encoder.py`)
+     • Model: `cross-encoder/ms-marco-MiniLM-L-6-v2`
+     • Pairwise joint cross-attention scoring
+     • Used as a ranking signal, NOT a correctness threshold
+                 │
+                 ▼
+     Grounded QA Engine (`rag/domain/grounded_qa.py`)
+     ├── Positive Grounding: Cites file, section, and page
+     └── Negative Grounding: Explicit refusal if facts are absent
 ```
 
-### Key Principles of the Connector Layer
-1. **Structural Protocol Typing**:
-   `InferenceConnector` is defined using Python's `@runtime_checkable Protocol` rather than an ABC. Workflows and test mocks can satisfy the interface structurally (via duck typing) without requiring direct class inheritance.
-2. **Strict Boundary Separation**:
-   * **Connector**: Provides access to a specific capability (model inference). Owns zero workflow sequencing, loops, branching, or prompt decision-making.
-   * **Orchestrator**: Decides *what to do* (state machines, tool coordination, retrieval, multi-step loops). Owns error recovery and fallback policies.
-   * **Foundation**: Owns model metadata, provider dispatch, and inference execution.
-3. **No Hidden Orchestration**:
-   The connector is strictly a capability gateway. It does not inspect prompt contents, does not classify tasks, and does not maintain multi-turn workflow state.
-4. **Explicit Error Passthrough**:
-   Exceptions (`ModelNotFoundError`, `ProviderUnavailableError`, `InferenceError`) flow straight through the connector to the caller. The connector does not swallow errors or perform silent model fallbacks.
-5. **Thread Safety & Execution Semantics**:
-   The connector delegates directly to `FoundationCore`. Thread safety for provider access is enforced at the `ProviderManager` and `ModelRegistry` layers via thread synchronization locks (`threading.RLock`). Callers are responsible for coordinating any multi-turn conversation state.
+### RAG Database Separation Rule
+The RAG database is strictly segregated:
+* `local_ai`: Application state, user goals, task execution graphs.
+* `local_ai_rag`: Chunk embeddings, document text, vector index.
+* Contention Rule: Contention between Nomic embedding models, cross-encoder rerankers, and `llama-server` is actively managed. If CUDA VRAM is saturated, reranking seamlessly falls back to optimized CPU execution.
 
 ---
 
-## 7. Usage Examples
+## 5. Foundation Core & Inference Runtime
 
-### 7.1 Using the Connector in Workflows (Dependency Injection)
-```python
-from connectors import FoundationInferenceConnector, InferenceConnector
-from core import FoundationCore, GenerationOptions
+### 5.1 Foundation Core (`core/`)
+`FoundationCore` is the lowest-level internal framework. It contains:
+* `ModelRegistry`: Declarative model configurations parsed from `configs/models/*.toml`.
+* `ProviderManager`: Routes model requests to verified providers.
+* `InferenceRequest` & `InferenceResponse`: Strongly typed dataclasses enforcing validation invariants (finite temperatures, bounded tokens, explicit formats).
 
-# 1. Initialize Foundation
-core = FoundationCore.create()
-
-# 2. Instantiate Connector
-connector: InferenceConnector = FoundationInferenceConnector(core=core)
-
-# 3. Pass Connector into a higher-level workflow
-class CodeReviewWorkflow:
-    def __init__(self, inference: InferenceConnector) -> None:
-        self._inference = inference
-
-    def review(self, code_snippet: str) -> str:
-        response = self._inference.infer_prompt(
-            model_id="default",
-            prompt=f"Review this code for potential security issues:\n{code_snippet}",
-            options=GenerationOptions(temperature=0.1),
-        )
-        return response.text
-```
-
-### 7.2 Structured Execution with `InferenceRequest`
-```python
-from connectors import FoundationInferenceConnector
-from core import FoundationCore, InferenceRequest, GenerationOptions
-
-core = FoundationCore.create()
-connector = FoundationInferenceConnector(core)
-
-request = InferenceRequest.from_prompt(
-    model_id="default",  # Foundation alias resolved seamlessly
-    prompt="Explain binary search in Python.",
-    options=GenerationOptions(temperature=0.2, max_tokens=256),
-)
-response = connector.infer(request)
-print("Generated text:", response.text)
-print(f"Tokens: {response.usage.total_tokens} (Latency: {response.latency_ms:.1f}ms)")
-```
-
-### 7.3 Streamlined Single-Prompt Execution with `infer_prompt`
-```python
-response = connector.infer_prompt(
-    model_id="qwen3.5-9b",
-    prompt="Summarize the core findings in 3 bullet points.",
-    system_prompt="You are a technical analyst.",
-    options=GenerationOptions(temperature=0.1),
-)
-print("Summary:", response.text)
-```
+### 5.2 Provider Layer (`adapters/llama_cpp/`)
+The `LlamaCppProvider` interfaces with `llama-server` via HTTP client mode:
+* Uses native `llama-server` router mode (`--models-preset configs/llama_models.ini`).
+* Communicates with two concurrent model slots on `127.0.0.1:8080`.
+* Translates Foundation model aliases (`default`, `qwen3.5`, `vision`) to runtime models.
+* Bounded HTTP response streaming with `max_response_bytes` protection.
 
 ---
 
-## 8. The Workflow Layer (`workflows/`)
+## 6. Deterministic 4-Stage Plan Validation
 
-The Workflow Layer establishes **conventions and shared contracts** for higher-level systems that consume connectors. It deliberately does **not** impose a base class, Protocol, pipeline engine, or execution framework.
+Before any plan generated by `LLMPlanner` is executed, it must pass through `PlanValidator`:
 
-### Design Rationale
-
-Workflows are not polymorphic. A chat workflow, a code review workflow, a RAG workflow, and an agent loop differ fundamentally in input types, output types, control flow, and error handling. Forcing them into a common `Workflow` ABC or Protocol creates a false abstraction. Instead, the layer provides:
-
-1. **Constructor Injection Convention**: Workflows receive connectors via `__init__()`.
-2. **Shared Result Envelope**: `WorkflowResult[T]` carries typed output + metadata.
-3. **Workflow Error Boundary**: `WorkflowError` distinguishes workflow-level failures from infrastructure errors.
-
-### `WorkflowResult[T]`
-
-A generic dataclass providing a common result envelope:
-
-```python
-@dataclass
-class WorkflowResult(Generic[T]):
-    output: T                              # Primary output, typed per workflow
-    model_id: Optional[str] = None         # Model that produced the output (if applicable)
-    metadata: Dict[str, Any] = {}          # Workflow-specific diagnostic data
-    errors: List[str] = []                 # Non-fatal warnings/issues
-```
-
-- `output` is generic (`T`) so each workflow carries its own output type.
-- `model_id` is optional because not every workflow step involves inference.
-- `errors` captures non-fatal issues; fatal errors raise exceptions.
-
-### `WorkflowError`
-
-A domain exception under `FoundationError`:
-
-```text
-FoundationError
-├── ConfigurationError
-├── ModelRegistryError
-│   ├── ModelNotFoundError
-│   └── ModelUnavailableError
-├── ProviderError
-│   ├── ProviderNotFoundError
-│   ├── ProviderUnavailableError
-│   ├── ProviderResponseError
-│   ├── InferenceError
-│   └── LifecycleConflictError
-└── WorkflowError              ← workflow-level failures
-```
-
-Workflows may:
-- Let infrastructure errors propagate directly (no catch).
-- Catch and wrap infrastructure errors with additional context: `raise WorkflowError(...) from cause`.
-
-Both patterns are valid. The workflow author decides.
-
-### Workflow Convention: Constructor Injection
-
-```python
-from connectors import InferenceConnector
-from workflows import WorkflowResult
-
-class CodeReviewWorkflow:
-    def __init__(self, inference: InferenceConnector) -> None:
-        self._inference = inference
-
-    def review(self, code: str) -> WorkflowResult[str]:
-        response = self._inference.infer_prompt(
-            model_id="default",
-            prompt=f"Review this code:\n{code}",
-        )
-        return WorkflowResult(output=response.text, model_id=response.model_id)
-```
-
-### What the Workflow Layer Does NOT Contain
-
-| Non-concern | Reason |
-|---|---|
-| `Workflow` Protocol or ABC | Workflows are not polymorphic |
-| Pipeline / DAG engine | Constrains control flow |
-| Workflow registry / discovery | Application-level concern |
-| Agent loops or planners | Built when agents are needed |
-| RAG / retrieval contracts | Built when RAG is needed |
-| Tool execution contracts | Built when tools are needed |
-| Session / conversation state | Application-level concern |
-
-### Data / Dependency Flow
-
-```text
-Application Code
-        │  constructs
-        ▼
-  SomeWorkflow(inference=connector, ...)
-        │  calls domain methods
-        ▼
-  Workflow calls self._inference.infer_prompt(...)  ← any number of times
-        │
-        ▼
-  InferenceConnector (Protocol)
-        │
-        ▼
-  FoundationInferenceConnector → FoundationCore → ProviderManager → llama-server
-```
-
-Testing substitutes the connector:
-
-```text
-  Test Code
-        │  constructs with fake/mock
-        ▼
-  SomeWorkflow(inference=fake_connector)
-        │
-        ▼
-  fake_connector returns canned responses
-        │
-        ▼
-  Assert on WorkflowResult
-```
-
-### Reference Implementation: `TextAnalysisWorkflow`
-
-`TextAnalysisWorkflow` (`workflows/text_analysis.py`) serves as the canonical reference implementation demonstrating the workflow layer conventions:
-
-1. **Constructor Dependency Injection**:
-   ```python
-   workflow = TextAnalysisWorkflow(inference=connector)
-   ```
-   Accepts any object conforming to the structural `InferenceConnector` protocol. In production, this receives `FoundationInferenceConnector(core)`. In tests, it receives a duck-typed fake or mock.
-2. **Single-Pass (`QUICK`) vs Two-Pass (`DETAILED`) Execution**:
-   * `AnalysisDepth.QUICK`: Executes 1 inference call generating a concise summary and extracted key points.
-   * `AnalysisDepth.DETAILED`: Executes 2 sequential inference calls:
-     1. *Phase 1 (Extraction)*: Extracts factual findings and core takeaways.
-     2. *Phase 2 (Synthesis)*: Injects the extracted findings alongside the original text to synthesize a comprehensive executive summary.
-3. **Accurate Metric Aggregation**:
-   Combines token accounting across passes using the normalized `TokenUsage` contract (`prompt_tokens`, `completion_tokens`, `total_tokens`) and tracks `total_inference_latency_ms` without conflating inference latency with workflow overhead.
-4. **Contextual Error Wrapping**:
-   Catches infrastructure exceptions (`ModelNotFoundError`, `ProviderError`, covering `ProviderUnavailableError`, `InferenceError`, and `ProviderResponseError`) and wraps them in `WorkflowError` with phase-specific context (e.g. `Text analysis failed during extraction phase`), while preserving the original cause via exception chaining (`raise WorkflowError(...) from exc`).
-5. **Hardware & Runtime Agnostic**:
-   The workflow contains zero knowledge of CUDA, NVIDIA, Linux, VRAM, or `llama.cpp`. It depends purely on `InferenceConnector` and normalized data contracts, allowing seamless operation across diverse future hardware environments.
-6. **Optional Structured Generation & Domain Validation**:
-   Employs provider-neutral `OutputConstraint.json()` in `GenerationOptions` to request structural syntax constraints from the backend runtime. Decodes model output with generic `core.common.parsing.parse_json_payload` (using a deterministic syntactic heuristic to evaluate candidate code blocks from last to first), followed by strict domain type validation (`summary` as `str`, `key_points` as `List[str]`), while preserving resilient plain-text fallback for unconstrained or legacy outputs.
-7. **Explicit Trust Boundaries & Data Delimiters**:
-   Utilizes `system_prompt` to establish clear instruction and schema constraints, instructing the model to treat all data within source and findings blocks strictly as untrusted data to analyze. Inputs and intermediate findings are wrapped in explicit structural delimiters (`[SOURCE TEXT TO ANALYZE]`, `[EXTRACTED FINDINGS (UNTRUSTED DATA)]`) to establish clear data/instruction boundaries during multi-pass execution.
-
+1. **Stage 1 — Structural Schema Validation**: Confirms the plan contains a non-empty task list, valid IDs, recognized execution modes (`parallel` vs `sequential`), and integer constraints.
+2. **Stage 2 — Capability Resolution**: Checks that every task's `capability_id` exists in the active `CapabilityRegistry`.
+3. **Stage 3 — DAG Topology Validation**:
+   - Builds an adjacency list of task dependencies.
+   - Performs Depth-First Search (DFS) cycle detection.
+   - Enforces critical path depth limit ($\le 10$) and task count limit ($\le 50$).
+4. **Stage 4 — Parameter & Artifact Binding**: Verifies that any upstream reference (e.g. `{{tasks.step_1.output}}`) references a declared predecessor task.
 
 ---
 
+## 7. Testing & Verification Architecture
 
-## 9. Testing Strategy
+The test suite enforces reliability across three distinct tiers:
 
-* **Unit Tests (`tests/unit/`)**: Fast, pure CPU tests with zero GPU, model weight, or live server dependencies. Covers TOML parsing, contracts, registry, provider routing, runtime ID mapping, connector delegation/error propagation, workflow contracts, the `TextAnalysisWorkflow` reference implementation, and the `AppContext` composition root. Executes in < 0.2s.
-* **Integration Tests (`tests/integration/`)**: Opt-in tests verifying live communication when `llama-server` is started (`scripts/start_llama_server.sh`). Verifies both raw provider inference and end-to-end multi-pass workflow execution (`TextAnalysisWorkflow`) against live models. Skips cleanly when the server is offline.
-
----
-
-## 10. Application & Composition Layer (`apps/`)
-
-### Design Goal
-
-Application entry points (CLI tools, HTTP APIs, UI applications, standalone scripts, agent systems) need to bootstrap `FoundationCore`, wire it to an `InferenceConnector`, and then obtain domain workflow instances. Without a composition helper, every entry point repeats the same 3-line wiring sequence and is responsible for correct path resolution.
-
-The `apps/` package provides a **minimal, typed Composition Root** that eliminates this duplication without introducing a framework, inversion-of-control container, or global mutable singletons.
-
-### Design Rules
-
-1. **Strict Downward Dependency**: `core/`, `connectors/`, and `workflows/` must **never** import `apps/`. The dependency arrow points only downward.
-2. **No Domain Logic**: `AppContext` does not construct prompts, parse model outputs, or implement business rules. It only composes and provides access to the components that do.
-3. **Framework-Agnostic**: No runtime dependency on FastAPI, Click, Streamlit, or any other application framework. `AppContext` is a plain frozen dataclass usable from any consumer.
-4. **Optional**: Advanced consumers can still instantiate `FoundationCore` and `FoundationInferenceConnector` directly. `AppContext` is a convenience, not a requirement.
-5. **OS & Hardware Portable**: All path resolution is delegated to `FoundationCore.create()`, ensuring identical behaviour on Linux, macOS, and Windows.
-
-### `AppContext` API
-
-```python
-from apps import AppContext
-
-# --- Bootstrap (once per process / server startup) ---
-ctx = AppContext.create()                    # uses Path.cwd() as repo root
-ctx = AppContext.create(repo_root="/path")   # explicit root
-
-# --- Custom connector (alternate provider or test mock) ---
-ctx = AppContext(core=my_core, inference=my_connector)
-
-# --- Workflow Factory ---
-workflow = ctx.create_text_analysis_workflow()
-result   = workflow.analyze("Input text...")
-```
-
-### Usage by Consumer Type
-
-#### Python Scripts & Notebooks
-```python
-from apps import AppContext
-
-ctx      = AppContext.create()
-workflow = ctx.create_text_analysis_workflow()
-result   = workflow.analyze("Quarterly financial report...")
-print(result.output.summary)
-```
-
-#### CLI Applications (Click / Typer / argparse)
-```python
-import click
-from apps import AppContext
-
-@click.group()
-@click.pass_context
-def cli(ctx):
-    ctx.obj = AppContext.create()
-
-@cli.command()
-@click.argument("text")
-@click.pass_obj
-def analyze(app_ctx: AppContext, text: str):
-    result = app_ctx.create_text_analysis_workflow().analyze(text)
-    click.echo(result.output.summary)
-```
-
-#### HTTP REST APIs (FastAPI)
-```python
-from contextlib import asynccontextmanager
-from fastapi import FastAPI
-from apps import AppContext
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    app.state.ctx = AppContext.create()
-    yield
-
-app = FastAPI(lifespan=lifespan)
-```
-
-#### UI Apps (Streamlit / Gradio)
-```python
-import streamlit as st
-from apps import AppContext
-
-@st.cache_resource
-def get_context():
-    return AppContext.create()
-
-ctx      = get_context()
-workflow = ctx.create_text_analysis_workflow()
-```
-
-#### Agent & Tool Systems
-```python
-from apps import AppContext
-
-class TextAnalysisTool:
-    def __init__(self, ctx: AppContext):
-        self._workflow = ctx.create_text_analysis_workflow()
-
-    def run(self, text: str) -> str:
-        return self._workflow.analyze(text).output.summary
-```
-
-### Responsibility Boundary Table
-
-| Layer | Responsible For | Must NOT Do |
-|---|---|---|
-| **Consumer App** | CLI parsing, HTTP I/O, UI rendering, user sessions | Directly load TOML files or HTTP provider clients |
-| **`AppContext`** | Wires Core + Connector once; typed workflow factory | Domain logic, prompt construction, output parsing |
-| **`workflows/`** | Validation, prompts, multi-pass inference, parsing, metrics | Process lifecycle, CLI flags, HTTP I/O |
-| **`connectors/`** | Capability gateway Protocol | Workflow logic, application lifecycle |
-| **`core/`** | Model registry, provider selection, runtime HTTP | Import `apps/`, `workflows/`, or `connectors/` |
+1. **Unit Tests (`tests/unit/`, 520+ tests)**:
+   - Completely isolated, pure CPU tests.
+   - Zero live server, model weight, or database dependencies.
+   - Executes in seconds, validating routing rules, plan validation, capability contracts, and error handling.
+2. **Integration Tests (`tests/integration/`)**:
+   - Tests live communication with `llama-server` and PostgreSQL when services are available.
+   - Automatically skips with clear environmental reasons when run offline.
+3. **End-to-End Golden Flow Validation (`tests/e2e/test_golden_flow_validation.py`)**:
+   - Validates all 11 real-world scenarios from `golden_test_pack/`.
+   - Exercises real multi-capability goal execution: Vision inspection $\rightarrow$ RAG lookup $\rightarrow$ Sandboxed Docker calculation $\rightarrow$ Multi-format artifact generation.
